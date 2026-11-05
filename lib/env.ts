@@ -52,6 +52,9 @@ const baseSchema = z.object({
   SMTP_SECURE: booleanish(false),
   SMTP_FROM: z.string().min(3),
 
+  MAILGUN_API_KEY: optionalString,
+  MAILGUN_DOMAIN: optionalString,
+  MAILGUN_REGION: z.enum(["US", "EU"]).default("US"),
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,
   MICROSOFT_CLIENT_ID: optionalString,
@@ -82,6 +85,11 @@ const baseSchema = z.object({
     emptyToUndefined,
     z.enum(["open", "invite_only", "disabled"]).default("open"),
   ),
+  // OneKeel internal access and required-calendar booking safeguards.
+  ALLOWED_EMAILS: z.string().optional(),
+  ALLOWED_EMAIL_DOMAINS: z.string().optional(),
+  ADMIN_EMAIL: z.string().email().optional(),
+  CALENDAR_REQUIRED_HOSTS: z.string().optional(),
   WORKER_MODE: z.preprocess(emptyToUndefined, z.enum(["external", "inline"]).default("external")),
   MIGRATE_ON_START: booleanish(true),
   // Reverse proxies whose X-Forwarded-For entries are trusted (CIDRs, comma-separated).

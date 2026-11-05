@@ -18,7 +18,7 @@ const NOTICES: Record<string, { tone: "success" | "error"; text: string }> = {
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const params = await searchParams;
   // `next` comes from proxy.ts; only same-origin paths are honored (no open redirect).
-  const next = safeRedirectPath(params.next);
+  const next = safeRedirectPath(params.next, "/setup");
   const session = await getSession();
   // A disabled user's leftover session must not bounce between /login and requireUser().
   if (session && !session.user.disabledAt) redirect(next);

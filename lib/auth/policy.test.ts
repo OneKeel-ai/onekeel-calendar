@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseAccessConfig } from "./access";
 import { ADMIN_USER_ACTIONS, type AdminUserAction, checkAdminAction, type UserRole, decideSignup, evaluateLockout, LOCKOUT_MAX_FAILURES, LOCKOUT_WINDOW_MS } from "./policy";
 
 describe("decideSignup", () => {
@@ -29,6 +30,49 @@ describe("decideSignup", () => {
     });
     expect(decideSignup({ mode: "invite_only", existingUserCount: 1, invited: true })).toEqual({ allowed: true, role: "user" });
     expect(decideSignup({ mode: "disabled", existingUserCount: 1, invited: true })).toMatchObject({ allowed: false });
+  });
+});
+
+describe("decideSignup with the internal allowlist", () => {
+  const access = parseAccessConfig({
+    ALLOWED_EMAIL_DOMAINS: "onekeel.ai",
+    ALLOWED_EMAILS: "julie@partner.com",
+    ADMIN_EMAIL: "josh.copp@onekeel.ai",
+  });
+  const notAllowed = { allowed: false, reason: "NOT_ALLOWED" };
+
+  it("blocks outsiders even for the very first account (no public takeover)", () => {
+    for (const mode of ["open", "invite_only", "disabled"] as const) {
+      expect(decideSignup({ mode, existingUserCount: 0, adminExists: false, email: "attacker@evil.com", access })).toEqual(notAllowed);
+    }
+    const noAdminEmail = parseAccessConfig({ ALLOWED_EMAIL_DOMAINS: "onekeel.ai" });
+    expect(decideSignup({ mode: "open", existingUserCount: 0, email: "attacker@evil.com", access: noAdminEmail })).toEqual(notAllowed);
+  });
+
+  it("fails closed when the address is missing", () => {
+    expect(decideSignup({ mode: "open", existingUserCount: 0, access })).toEqual(notAllowed);
+  });
+
+  it("makes ADMIN_EMAIL the first admin, even when signups are otherwise disabled", () => {
+    expect(decideSignup({ mode: "disabled", existingUserCount: 0, adminExists: false, email: "josh.copp@onekeel.ai", access })).toEqual({ allowed: true, role: "admin" });
+  });
+
+  it("lets other allowlisted people join as plain users before the admin exists", () => {
+    expect(decideSignup({ mode: "open", existingUserCount: 0, adminExists: false, email: "chelsea@onekeel.ai", access })).toEqual({ allowed: true, role: "user" });
+    expect(decideSignup({ mode: "open", existingUserCount: 1, adminExists: false, email: "julie@partner.com", access })).toEqual({ allowed: true, role: "user" });
+  });
+
+  it("still lets Josh become admin after others joined first, but only once", () => {
+    expect(decideSignup({ mode: "disabled", existingUserCount: 2, adminExists: false, email: "josh.copp@onekeel.ai", access })).toEqual({ allowed: true, role: "admin" });
+    expect(decideSignup({ mode: "open", existingUserCount: 3, adminExists: true, email: "josh.copp@onekeel.ai", access })).toEqual({ allowed: true, role: "user" });
+  });
+
+  it("applies the signup mode to allowlisted people after bootstrap", () => {
+    expect(decideSignup({ mode: "disabled", existingUserCount: 1, adminExists: true, email: "chelsea@onekeel.ai", access })).toMatchObject({ reason: "SIGNUP_DISABLED" });
+  });
+
+  it("without an allowlist behaves exactly as before", () => {
+    expect(decideSignup({ mode: "open", existingUserCount: 0, email: "anyone@y.com" })).toEqual({ allowed: true, role: "admin" });
   });
 });
 

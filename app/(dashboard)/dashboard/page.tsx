@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Mail, Plus } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -78,7 +78,12 @@ export default async function DashboardPage() {
       <div className="flex w-full max-w-[1104px] flex-col gap-5 md:gap-7">
         <header className="flex flex-col gap-1 md:gap-1.5">
           <h1 className="text-2xl font-semibold tracking-[-0.02em] md:text-[28px] md:leading-9">Welcome, {firstName}</h1>
-          <p className="text-sm text-muted-foreground">{stepsLeftText(stepsLeft)}</p>
+          <p className="text-sm text-muted-foreground">
+            {stepsLeftText(stepsLeft)}{" "}
+            <Link href="/setup" className="font-medium text-foreground underline underline-offset-2">
+              Open setup
+            </Link>
+          </p>
         </header>
         <div className="grid items-start gap-4 md:gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
           <SetupCard steps={steps} />
@@ -107,7 +112,16 @@ export default async function DashboardPage() {
               Copy booking link
             </CopyButton>
           )}
+          <Button asChild variant="outline" className={`${headerButton} bg-card`}>
+            <Link href="/setup">Setup</Link>
+          </Button>
           <Button asChild className={headerButton}>
+            <Link href="/schedule">
+              <Mail aria-hidden />
+              Email times
+            </Link>
+          </Button>
+          <Button asChild variant="outline" className={`${headerButton} bg-card`}>
             <Link href="/event-types/new">
               <Plus aria-hidden />
               New event type

@@ -46,6 +46,7 @@ const FAILURE_MESSAGES: Record<string, string> = {
   IN_PAST: "This meeting has already taken place.",
   LINK_INVALID: "This booking link is invalid, expired or has already been used.",
   NOT_ALLOWED: "The host doesn't allow changing this booking online anymore. Please contact them directly.",
+  CALENDAR_UNAVAILABLE: "Online booking is temporarily unavailable because the host's calendar can't be checked. Please contact them directly.",
   INVALID_RECURRENCE: "That number of occurrences isn't available for this event.",
 };
 

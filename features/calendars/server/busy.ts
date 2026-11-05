@@ -2,6 +2,7 @@ import { and, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
 import type { Database } from "@/db/client";
 import { booking, bookingReference, calendarBusyCache, connectedCalendar, credential, eventTypeConflictCalendar } from "@/db/schema";
 import type { Interval } from "@/lib/availability/types";
+import { assertCalendarsUsable, busyModeFor, isCalendarRequired, resolveProviderFailure } from "@/lib/calendars/safety";
 import { getProvider } from "@/lib/integrations/registry";
 import type { BusyInterval, ProviderId } from "@/lib/integrations/types";
 import { errorSummary, logger } from "@/lib/logger";
@@ -115,9 +116,14 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 export async function getExternalBusy(
   deps: IntegrationDeps,
-  input: { userId: string; eventTypeId?: string; window: Interval; timeZone: string; maxAgeMs?: number },
+  input: { userId: string; eventTypeId?: string; window: Interval; timeZone: string; maxAgeMs?: number; requireCalendar?: boolean },
 ): Promise<ExternalBusy> {
   const calendars = await conflictCalendars(deps.db, input.userId, input.eventTypeId);
+  // Required hosts (CALENDAR_REQUIRED_HOSTS): no calendar, a revoked one, or a provider failure
+  // throws CalendarUnavailableError instead of returning "free". Optional hosts keep old behaviour.
+  const required = input.requireCalendar ?? isCalendarRequired({ id: input.userId });
+  const mode = busyModeFor(input.maxAgeMs);
+  assertCalendarsUsable(calendars, required);
   if (!calendars.length) return { busy: [], degraded: false };
   const now = deps.now();
   const results = new Map<string, BusyInterval[]>();
@@ -165,10 +171,9 @@ export async function getExternalBusy(
         degraded = true;
         logger.warn("calendar.busy_fetch_failed", { credentialId, provider: getProvider(cals[0].provider).id, ...errorSummary(error) });
         for (const cal of cals) {
-          const stale = await cached(deps.db, cal.id, input.window);
-          const usable = stale && now - stale.fetchedAt.getTime() < STALE_MAX_MS;
-          // Fail closed: without recent data the whole window counts as busy.
-          results.set(cal.id, usable ? stale.busy : [{ start: input.window.start, end: input.window.end }]);
+          const outcome = resolveProviderFailure({ stale: await cached(deps.db, cal.id, input.window), now, mode, required, calendarName: cal.name });
+          // Fail closed: without trustworthy data the whole window counts as busy.
+          results.set(cal.id, outcome.kind === "use_stale" ? outcome.busy : [{ start: input.window.start, end: input.window.end }]);
         }
       }
     }),

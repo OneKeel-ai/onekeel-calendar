@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- Open from a local static server (e.g. npx serve extensions/gmail). Fake Gmail compose, no extension needed.
+     Checks button injection, selection-preserving insert, sanitizing and the no-compose fallback. Results in #out. -->
+<html><head><meta charset="utf-8"><title>OneKeel Gmail harness</title></head>
+<body>
+  <div id="compose">
+    <div role="textbox" g_editable="true" contenteditable="true" aria-label="Message Body" id="body">Hello <b>Ada</b>,<br>Thanks for your time.</div>
+    <table><tr><td><div role="button" data-tooltip="Send ‪(⌘Enter)‬" id="send">Send</div></td></tr></table>
+  </div>
+  <pre id="out">running...</pre>
+  <script src="../bridge-core.js"></script>
+  <script src="../compose-dom.js"></script>
+  <script>
+    const results = [];
+    try {
+    const B = OneKeelBridge, C = OneKeelCompose;
+    const check = (name, ok) => results.push((ok ? "PASS " : "FAIL ") + name);
+    const body = document.getElementById("body");
+    let clicked = 0;
+    const btn = C.injectControl(body, () => clicked++);
+    check("button injected next to Send", !!btn && btn.textContent === "Meeting times");
+    check("second inject is a no-op", C.injectControl(body, () => {}) === null);
+    btn.click();
+    check("click handler runs", clicked === 1);
+
+    // Selection preserved: caret after "Hello ".
+    const text = body.firstChild;
+    const r = document.createRange(); r.setStart(text, 6); r.collapse(true);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    const saved = C.captureSelection(window, body);
+    check("selection captured", !!saved);
+    sel.removeAllRanges(); // simulate focus moving to the popup
+    const html = B.sanitizeHtml('<table role="presentation"><tr><td style="color:#111"><a href="https://x.com/a?b=1">9:00</a><scr' + 'ipt>window.pwned=1</scr' + 'ipt></td></tr></table><img src=x onerror="window.pwned=1">');
+    const res = C.insertHtml(window, body, saved, html);
+    check("insert ok", res.ok);
+    check("inserted at caret, before 'Ada'", body.innerHTML.indexOf("<table") > -1 && body.innerHTML.indexOf("<table") < body.innerHTML.indexOf("Ada"));
+    check("no script/img/handlers", !body.querySelector("script,img") && !window.pwned && !/onerror/.test(body.innerHTML));
+    check("no send triggered", document.getElementById("send").textContent === "Send");
+
+    // Fallback: compose gone.
+    const detached = document.createElement("div"); detached.contentEditable = "true";
+    check("detached compose reports failure", C.insertHtml(window, detached, null, "<p>x</p>").ok === false);
+    check("no range inserts at end", (() => { const o = C.insertHtml(window, body, null, "<p>TAILMARK</p>"); return o.ok && body.textContent.trim().endsWith("TAILMARK"); })());
+    document.getElementById("out").textContent = results.join("\n");
+    } catch (e) { results.push("FAIL exception: " + e); }
+    document.getElementById("out").textContent = results.join("\n");
+    document.title = results.length && results.every((x) => x.startsWith("PASS")) ? "HARNESS PASS" : "HARNESS FAIL";
+  </script>
+</body></html>

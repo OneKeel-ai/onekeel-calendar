@@ -42,8 +42,13 @@ export function useWeekSlots({ booking, duration, timeZone, weekStart }: Query):
         cache: "no-store",
       });
       if (!res.ok) throw new Error(String(res.status));
-      const data = (await res.json()) as { slots?: { start: number }[] };
+      const data = (await res.json()) as { slots?: { start: number }[]; unavailable?: string; message?: string };
       if (id !== seq.current) return;
+      if (data.unavailable) {
+        // Required host calendar can't be checked: show the reason, never an unexplained empty week.
+        setState({ status: "error", slots: EMPTY, message: data.message ?? "Online booking is temporarily unavailable. Please contact the host directly." });
+        return;
+      }
       const slots = (data.slots ?? []).filter((s) => Number.isFinite(s.start)).map((s) => new Date(s.start).toISOString());
       setState({ status: "ready", slots });
     } catch {

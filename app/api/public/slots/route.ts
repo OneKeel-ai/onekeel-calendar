@@ -53,6 +53,10 @@ async function compute(request: Request, input: unknown) {
       : await getAvailableSlots(db, { ...request, host, externalBusy: cachedExternalBusyFor(host, eventType.id), schedule });
     return json({ slots: slots.map((s) => ({ start: s.start, end: s.end, ...(s.seatsRemaining !== undefined && { seats: s.seatsRemaining }) })) });
   } catch (error) {
+    // A required calendar can't be checked: no slots, with a reason the page can show.
+    if (error instanceof BookingFailure && error.code === "CALENDAR_UNAVAILABLE") {
+      return json({ slots: [], unavailable: "calendar_unavailable", message: "Online booking is temporarily unavailable. Please contact the host directly." });
+    }
     if (error instanceof BookingFailure) return json({ error: error.code }, 400);
     throw error;
   }

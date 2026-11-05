@@ -79,7 +79,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           <SidebarContent user={person} pending={pending} inSheet />
         </MobileNav>
       </header>
-      <aside className="relative hidden w-64 shrink-0 overflow-hidden border-r border-border bg-card md:block">
+      <aside className="relative hidden w-[216px] shrink-0 overflow-hidden border-r border-border bg-card md:block">
         <SidebarContent user={person} pending={pending} />
       </aside>
       {/* `relative` makes this scroller the containing block of absolutely positioned descendants

@@ -28,7 +28,9 @@ export type BookingError =
   | "NOT_ALLOWED"
   | "INVALID_RECURRENCE"
   /** Accept/reject on a booking that is not pending (BKG-012). */
-  | "NOT_PENDING";
+  | "NOT_PENDING"
+  /** A required host's calendar is missing, disconnected or unreadable: no booking, no free slots. */
+  | "CALENDAR_UNAVAILABLE";
 
 export class BookingFailure extends Error {
   constructor(

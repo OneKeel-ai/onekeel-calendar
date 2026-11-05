@@ -11,6 +11,7 @@ import * as schema from "@/db/schema";
 import type { Env } from "@/lib/env";
 import type { EmailRequest } from "@/lib/jobs/queues";
 import { logger } from "@/lib/logger";
+import { type AccessConfig, accessConfigFromProcessEnv, isEmailAllowed } from "./access";
 import { promoteIfNoAdmin } from "./admin";
 import { clearFailedLogins, hitAccountLimit, releaseLatestAttempt, reserveSignInAttempt } from "./lockout";
 import { decideSignup } from "./policy";
@@ -21,6 +22,8 @@ export type AuthDeps = {
   db: Database;
   env: Pick<Env, "APP_URL" | "AUTH_SECRET" | "SIGNUP_MODE" | "TRUSTED_PROXIES" | "oauth">;
   sendEmail: SendEmail;
+  /** Internal allowlist (ALLOWED_EMAILS, ALLOWED_EMAIL_DOMAINS, ADMIN_EMAIL). Defaults to process.env. */
+  access?: AccessConfig;
 };
 
 const SIGN_IN_EMAIL = "/sign-in/email";
@@ -42,6 +45,8 @@ const forwardedFor = (headers?: Headers): string | null =>
 const SIGNUP_MESSAGES = {
   SIGNUP_DISABLED: "Sign-ups are disabled on this instance.",
   INVITE_REQUIRED: "This instance is invite-only.",
+  NOT_ALLOWED: "This calendar is only open to approved team members. Ask Josh to add your email address.",
+  PASSWORD_SIGNUP_DISABLED: "Use Google or an email sign-in link to join this calendar.",
 } as const;
 
 const signupRejected = (reason: keyof typeof SIGNUP_MESSAGES) =>
@@ -57,7 +62,7 @@ async function newUserDefaults(db: Database): Promise<{ timeZone?: string; weekS
   };
 }
 
-export function createAuth({ db, env, sendEmail }: AuthDeps) {
+export function createAuth({ db, env, sendEmail, access = accessConfigFromProcessEnv() }: AuthDeps) {
   const socialProviders = {
     ...(env.oauth.google && { google: { ...env.oauth.google, prompt: "select_account" as const } }),
     ...(env.oauth.microsoft && { microsoft: env.oauth.microsoft }),
@@ -70,18 +75,21 @@ export function createAuth({ db, env, sendEmail }: AuthDeps) {
    * account with an attacker's password.
    */
   const currentSignupDecision = async (email: string | undefined, passwordSignup: boolean) => {
+    // An internal address must be proved before its account exists: no password preregistration.
+    if (access.restricted && passwordSignup) return { allowed: false as const, reason: "PASSWORD_SIGNUP_DISABLED" as const };
     // Admins can override SIGNUP_MODE in the UI (ADM-009); read uncached, sign-ups are rare.
     const mode = resolveSignupMode(await loadInstanceSettings(db), env.SIGNUP_MODE);
     const [{ value }] = await db.select({ value: count() }).from(schema.user);
+    const adminExists = (await db.$count(schema.user, eq(schema.user.role, "admin"))) > 0;
     const invited =
       mode === "invite_only" && email && !passwordSignup
         ? (await db.$count(schema.teamInvitation, and(eq(schema.teamInvitation.email, email.toLowerCase()), gt(schema.teamInvitation.expiresAt, new Date())))) > 0
         : false;
-    return decideSignup({ mode, existingUserCount: value, invited });
+    return decideSignup({ mode, existingUserCount: value, invited, email, access, adminExists });
   };
 
   return betterAuth({
-    appName: "OpenCalendar",
+    appName: "OneKeel Calendar",
     baseURL: env.APP_URL,
     secret: env.AUTH_SECRET,
     telemetry: { enabled: false },
@@ -160,7 +168,7 @@ export function createAuth({ db, env, sendEmail }: AuthDeps) {
           },
           // First-run bootstrap happens after commit, under a lock: exactly one admin (AUTH-005).
           after: async (user) => {
-            if (await promoteIfNoAdmin(db, user.id)) logger.info("auth.first_admin_created");
+            if (await promoteIfNoAdmin(db, user.id, access)) logger.info("auth.first_admin_created");
           },
         },
       },
@@ -169,9 +177,11 @@ export function createAuth({ db, env, sendEmail }: AuthDeps) {
           // Disabled accounts can't obtain a session through any sign-in method.
           before: async (session) => {
             const [row] = await db
-              .select({ disabledAt: schema.user.disabledAt })
+              .select({ disabledAt: schema.user.disabledAt, email: schema.user.email })
               .from(schema.user)
               .where(eq(schema.user.id, session.userId));
+            // Fail closed: an account whose address left the allowlist can no longer sign in.
+            if (row && !isEmailAllowed(access, row.email)) throw signupRejected("NOT_ALLOWED");
             if (row?.disabledAt) {
               throw new APIError("FORBIDDEN", { message: "This account has been disabled.", code: "ACCOUNT_DISABLED" });
             }
@@ -189,6 +199,8 @@ export function createAuth({ db, env, sendEmail }: AuthDeps) {
         }
         const email = bodyEmail(ctx.body);
         if (!email) return;
+        // Never send a sign-in link to an address outside the allowlist.
+        if (ctx.path === "/sign-in/magic-link" && !isEmailAllowed(access, email)) throw signupRejected("NOT_ALLOWED");
         if (ctx.path === SIGN_IN_EMAIL) {
           const lock = await reserveSignInAttempt(db, email, forwardedFor(ctx.request?.headers));
           if (lock.locked) {

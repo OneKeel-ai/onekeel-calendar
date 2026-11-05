@@ -36,8 +36,8 @@ export type ResolvedSettings = {
 
 /** Today's built-in branding: an uncustomized instance looks exactly like OpenCalendar always did. */
 export const DEFAULT_SETTINGS: ResolvedSettings = {
-  appName: "OpenCalendar",
-  description: "Open-source scheduling you can host yourself.",
+  appName: "OneKeel Calendar",
+  description: "Choose meeting times, share them in email, and let your guest book.",
   hidePoweredBy: false,
   hideSourceLink: false,
   theme: {},
@@ -46,13 +46,13 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   emailFooterText: null,
   emailButtonColor: "#111827",
   signupMode: null,
-  landingHeadline: "Scheduling you can host yourself",
+  landingHeadline: "A meeting, without the back-and-forth",
   landingBody:
-    "OpenCalendar is an open-source alternative to Calendly and Cal.com. Share a link, let people book time with you, and keep your data on your own server.",
-  loginMessage: null,
+    "Offer a few times right in your email. Your guest chooses one, and the meeting lands on the right calendar.",
+  loginMessage: "For the OneKeel team. Sign in with your work email to set up your calendar and meeting preferences.",
   oauthGoogleHidden: false,
   oauthMicrosoftHidden: false,
-  defaultTimeZone: null,
+  defaultTimeZone: "America/Chicago",
   defaultWeekStart: null,
   defaultTimeFormat: null,
   assets: {},

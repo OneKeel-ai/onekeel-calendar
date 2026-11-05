@@ -1,0 +1,57 @@
+services:
+  - type: web
+    name: onekeel-calendar
+    runtime: docker
+    region: oregon
+    plan: starter
+    healthCheckPath: /api/health/ready
+    autoDeployTrigger: off
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: onekeel-calendar-db
+          property: connectionString
+      - key: APP_URL
+        value: https://onekeel-calendar.onrender.com
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: WORKER_MODE
+        value: inline
+      - key: MIGRATE_ON_START
+        value: true
+      - key: DATABASE_POOL_MAX
+        value: 6
+      - key: SIGNUP_MODE
+        value: open
+      - key: ALLOWED_EMAIL_DOMAINS
+        value: onekeel.ai
+      - key: ADMIN_EMAIL
+        value: josh.copp@onekeel.ai
+      - key: CALENDAR_REQUIRED_HOSTS
+        value: '*'
+      - key: SOURCE_URL
+        value: https://github.com/OneKeel-ai/onekeel-calendar
+      - key: SMTP_HOST
+        value: smtp.mailgun.org
+      - key: SMTP_FROM
+        value: OneKeel Calendar <calendar@gseomail.onekeel.ai>
+      - key: MAILGUN_DOMAIN
+        value: gseomail.onekeel.ai
+      - key: MAILGUN_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: CAPTCHA
+        value: altcha
+
+databases:
+  - name: onekeel-calendar-db
+    region: oregon
+    plan: basic-256mb
+    postgresMajorVersion: 16
+    diskSizeGB: 5
+    ipAllowList: []

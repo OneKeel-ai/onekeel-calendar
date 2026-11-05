@@ -181,10 +181,12 @@ export function BookingWidget(props: BookingWidgetProps) {
         cache: "no-store",
       });
       if (!res.ok) throw new Error(String(res.status));
-      const data = (await res.json()) as { slots: Slot[] };
+      const data = (await res.json()) as { slots: Slot[]; unavailable?: string; message?: string };
       if (seq !== requestSeq.current) return; // a newer range/zone/duration was requested meanwhile
       setSlots(data.slots);
       setLoadedKey(key);
+      // The host's calendar can't be checked: say so instead of showing an unexplained empty list.
+      if (data.unavailable) setLoadError(data.message ?? "Online booking is temporarily unavailable. Please contact the host directly.");
     } catch {
       if (seq === requestSeq.current) setLoadError("Couldn't load available times. Please try again.");
     } finally {

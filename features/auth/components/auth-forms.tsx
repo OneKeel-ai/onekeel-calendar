@@ -12,6 +12,9 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { authClient } from "@/lib/auth/client";
 
+/** Where people land after signing in or verifying their email: the team setup page first. */
+export const DEFAULT_LANDING = "/setup";
+
 type Status = { tone: "error" | "success"; message: string } | null;
 
 function StatusAlert({ status }: { status: NonNullable<Status> }) {
@@ -63,7 +66,7 @@ function useSubmit() {
 export type SocialProvider = "google" | "microsoft";
 const PROVIDER_LABELS: Record<SocialProvider, string> = { google: "Google", microsoft: "Microsoft" };
 
-function SocialButtons({ providers, next = "/dashboard" }: { providers: SocialProvider[]; next?: string }) {
+function SocialButtons({ providers, next = DEFAULT_LANDING }: { providers: SocialProvider[]; next?: string }) {
   if (providers.length === 0) return null;
   return (
     <div className="flex flex-col gap-2">
@@ -84,7 +87,7 @@ function SocialButtons({ providers, next = "/dashboard" }: { providers: SocialPr
   );
 }
 
-export function LoginForm({ providers, next = "/dashboard" }: { providers: SocialProvider[]; next?: string }) {
+export function LoginForm({ providers, next = DEFAULT_LANDING }: { providers: SocialProvider[]; next?: string }) {
   const router = useRouter();
   const [mode, setMode] = useState<"password" | "magic">("password");
   const { pending, status, run } = useSubmit();
@@ -160,7 +163,7 @@ export function SignupForm({ providers }: { providers: SocialProvider[] }) {
         name: formValue(event, "name"),
         email,
         password: formValue(event, "password"),
-        callbackURL: "/dashboard",
+        callbackURL: DEFAULT_LANDING,
       });
       if (error) return { tone: "error", message: errorMessage(error) };
       router.push(`/check-email?email=${encodeURIComponent(email)}`);

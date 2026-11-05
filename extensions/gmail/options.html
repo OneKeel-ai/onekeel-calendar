@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>OneKeel Meeting Times settings</title>
+  <style>
+    body { font: 14px/20px system-ui, sans-serif; margin: 16px; width: 340px; color: #18181b; }
+    h1 { font-size: 16px; margin: 0 0 12px; }
+    label { display: block; font-weight: 600; margin-bottom: 4px; }
+    input { box-sizing: border-box; width: 100%; padding: 6px 8px; font: inherit; }
+    button { margin: 10px 8px 0 0; padding: 6px 12px; font: inherit; }
+    #status { margin-top: 10px; min-height: 20px; }
+    #status.error { color: #b91c1c; }
+    p.hint { color: #52525b; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>OneKeel Meeting Times</h1>
+  <label for="url">Calendar app URL</label>
+  <input id="url" type="url" spellcheck="false" autocomplete="off">
+  <p class="hint">HTTPS only. http://localhost is allowed for development. Only the site address is used.</p>
+  <button id="save" type="button">Save</button><button id="reset" type="button">Reset</button>
+  <p id="status" role="status"></p>
+  <script src="bridge-core.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

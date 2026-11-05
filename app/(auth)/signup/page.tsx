@@ -8,11 +8,13 @@ import { SignupForm } from "@/features/auth/components/auth-forms";
 import { effectiveSignupMode, isSignupOpen, visibleSocialProviders } from "@/features/auth/server/queries";
 import { getSession } from "@/lib/auth/session";
 import { getEnv } from "@/lib/env";
+import { accessConfigFromProcessEnv } from "@/lib/auth/access";
 
 export const metadata: Metadata = { title: "Sign up" };
 
 export default async function SignupPage() {
-  if (await getSession()) redirect("/dashboard");
+  if (await getSession()) redirect("/setup");
+  if (accessConfigFromProcessEnv().restricted) redirect("/login");
   const env = getEnv();
   const db = getDb();
   if (!(await isSignupOpen(db, env))) {

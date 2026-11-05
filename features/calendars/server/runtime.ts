@@ -6,6 +6,8 @@ import { sealEmail } from "@/lib/jobs/queues";
 import type { ExternalBusyFn } from "@/features/bookings/server/service";
 import { TtlCache } from "@/lib/ttl-cache";
 import type { IntegrationDeps } from "./credentials";
+import { BookingFailure } from "@/features/bookings/server/core";
+import { CalendarUnavailableError } from "@/lib/calendars/safety";
 import { BOOKING_MAX_AGE_MS, getExternalBusy } from "./busy";
 import { createIntegrationDeps } from "./deps";
 
@@ -33,8 +35,15 @@ export function getIntegrationDeps(): IntegrationDeps {
  * data older than BOOKING_MAX_AGE_MS is refetched, so a booking re-checks near-live calendars.
  */
 export function externalBusyFor(host: { id: string; timeZone: string }, eventTypeId: string, maxAgeMs = BOOKING_MAX_AGE_MS): ExternalBusyFn {
-  return async (window) =>
-    (await getExternalBusy(getIntegrationDeps(), { userId: host.id, eventTypeId, window, timeZone: host.timeZone, maxAgeMs })).busy;
+  return async (window) => {
+    try {
+      return (await getExternalBusy(getIntegrationDeps(), { userId: host.id, eventTypeId, window, timeZone: host.timeZone, maxAgeMs })).busy;
+    } catch (error) {
+      // Required calendar missing/revoked/unreadable: refuse explicitly (never "free").
+      if (error instanceof CalendarUnavailableError) throw new BookingFailure("CALENDAR_UNAVAILABLE", error.reason);
+      throw error;
+    }
+  };
 }
 
 /**

@@ -3,17 +3,36 @@
  * Kept free of I/O so they can be unit-tested exhaustively.
  */
 
+import { type AccessConfig, isEmailAllowed, mayBecomeAdmin, OPEN_ACCESS } from "./access";
+
 export type SignupMode = "open" | "invite_only" | "disabled";
 export type UserRole = "user" | "admin";
 
 export type SignupDecision =
   | { allowed: true; role: UserRole }
-  | { allowed: false; reason: "SIGNUP_DISABLED" | "INVITE_REQUIRED" };
+  | { allowed: false; reason: "SIGNUP_DISABLED" | "INVITE_REQUIRED" | "NOT_ALLOWED" };
 
-/** `invited`: the address has a pending, unexpired team invitation (TEAM-002). */
-export function decideSignup(input: { mode: SignupMode; existingUserCount: number; invited?: boolean }): SignupDecision {
-  // First-run bootstrap: the very first account becomes the instance admin regardless of mode.
-  if (input.existingUserCount === 0) return { allowed: true, role: "admin" };
+/**
+ * `invited`: the address has a pending, unexpired team invitation (TEAM-002).
+ * `email` / `access`: the internal allowlist (see access.ts). It is checked FIRST, so the
+ * first-admin bootstrap can never admit an address the allowlist does not cover.
+ * `adminExists`: whether an admin account exists. Only used when ADMIN_EMAIL is configured, so
+ * that other allowlisted people can join (as plain users) before the admin does.
+ */
+export function decideSignup(input: {
+  mode: SignupMode;
+  existingUserCount: number;
+  invited?: boolean;
+  email?: string;
+  access?: AccessConfig;
+  adminExists?: boolean;
+}): SignupDecision {
+  const access = input.access ?? OPEN_ACCESS;
+  if (!isEmailAllowed(access, input.email)) return { allowed: false, reason: "NOT_ALLOWED" };
+  const adminPending =
+    access.adminEmail !== null && input.adminExists !== undefined ? !input.adminExists : input.existingUserCount === 0;
+  // First-run bootstrap: the admin account is admitted regardless of mode.
+  if (adminPending && mayBecomeAdmin(access, input.email)) return { allowed: true, role: "admin" };
   switch (input.mode) {
     case "open":
       return { allowed: true, role: "user" };

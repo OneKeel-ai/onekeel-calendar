@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "OneKeel Meeting Times for Gmail",
+  "version": "0.1.0",
+  "description": "Adds a Meeting times button to Gmail compose and reply. Opens your OneKeel Calendar and inserts the times you pick into your draft. Never sends and never reads your mailbox.",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/mail/*"],
+      "js": ["bridge-core.js", "compose-dom.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": { "default_title": "OneKeel Meeting Times settings", "default_popup": "options.html" },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'self'" }
+}

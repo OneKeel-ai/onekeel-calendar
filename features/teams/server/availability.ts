@@ -20,6 +20,8 @@ export type MemberAvailability = {
   timeZone: string | null;
   working: Interval[];
   busy: Interval[];
+  /** The member's calendar couldn't be read (or a required one is missing): the whole window shows as busy. */
+  calendarUnavailable?: boolean;
 };
 
 export const MAX_VIEW_DAYS = 7;
@@ -36,13 +38,18 @@ export async function teamAvailability(
   const members = await membersOf(db, teamId);
   return Promise.all(
     members.map(async (m): Promise<MemberAvailability> => {
+      const flags = { calendarUnavailable: false };
       const [schedule, bookings, external] = await Promise.all([
         scheduleForEventType(db, m.userId, null),
         db
           .select({ start: bookingHost.blockedStart, end: bookingHost.blockedEnd })
           .from(bookingHost)
           .where(and(eq(bookingHost.userId, m.userId), eq(bookingHost.active, true), lt(bookingHost.blockedStart, new Date(span.end)), gt(bookingHost.blockedEnd, new Date(span.start)))),
-        externalBusyFor?.(m.userId)?.(span).catch(() => []) ?? Promise.resolve([]),
+        // Fail closed: an unreadable or missing required calendar is never shown as free.
+        externalBusyFor?.(m.userId)?.(span).catch((): Interval[] => {
+          flags.calendarUnavailable = true;
+          return [span];
+        }) ?? Promise.resolve([]),
       ]);
       const working = schedule ? expandSchedule(toScheduleInput(schedule), span).working : [];
       const busy = normalize([...bookings.map((b) => ({ start: b.start.getTime(), end: b.end.getTime() })), ...external.map((e) => ({ start: e.start, end: e.end }))]);
@@ -53,6 +60,7 @@ export async function teamAvailability(
         timeZone: schedule?.timeZone ?? null,
         working: working.map(clip).filter((i) => i.end > i.start),
         busy: busy.map(clip).filter((i) => i.end > i.start),
+        ...(flags.calendarUnavailable ? { calendarUnavailable: true } : {}),
       };
     }),
   );
