@@ -47,6 +47,8 @@ export function calendarStatus(connections: readonly CalendarFacts[]): CalendarS
     return { state: "attention", healthy: false, checked, destination, detail: "A calendar needs to be reconnected. Online booking is paused until it is." };
   if (checked === 0)
     return { state: "attention", healthy: false, checked, destination, detail: "Connected, but no calendar is checked for conflicts. Turn at least one on." };
+  if (!destination)
+    return { state: "attention", healthy: false, checked, destination, detail: "Choose a writable destination calendar for new bookings. Online booking stays paused until one is selected." };
   return {
     state: "done",
     healthy: true,

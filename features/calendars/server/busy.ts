@@ -1,8 +1,8 @@
 import { and, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
 import type { Database } from "@/db/client";
-import { booking, bookingReference, calendarBusyCache, connectedCalendar, credential, eventTypeConflictCalendar } from "@/db/schema";
+import { booking, bookingReference, calendarBusyCache, connectedCalendar, credential, destinationCalendar, eventType, eventTypeConflictCalendar } from "@/db/schema";
 import type { Interval } from "@/lib/availability/types";
-import { assertCalendarsUsable, busyModeFor, isCalendarRequired, resolveProviderFailure } from "@/lib/calendars/safety";
+import { assertCalendarsUsable, assertDestinationUsable, busyModeFor, type DestinationState, isCalendarRequired, resolveProviderFailure } from "@/lib/calendars/safety";
 import { getProvider } from "@/lib/integrations/registry";
 import type { BusyInterval, ProviderId } from "@/lib/integrations/types";
 import { errorSummary, logger } from "@/lib/logger";
@@ -74,6 +74,20 @@ async function conflictCalendars(db: Database, userId: string, eventTypeId?: str
   return chosen.map(({ invalidAt, checkConflicts: _c, overrideFor: _o, ...r }) => ({ ...r, invalid: invalidAt !== null }));
 }
 
+/** The calendar bookings are written to, mirroring sync.ts: event type override, else the host's default. */
+async function destinationState(db: Database, userId: string, eventTypeId?: string): Promise<DestinationState | null> {
+  const override = eventTypeId ? await db.select({ dest: eventType.destinationCalendarId }).from(eventType).where(eq(eventType.id, eventTypeId)) : [];
+  const [userDest] = await db.select().from(destinationCalendar).where(eq(destinationCalendar.userId, userId));
+  const id = override[0]?.dest ?? userDest?.connectedCalendarId;
+  if (!id) return null;
+  const [row] = await db
+    .select({ readOnly: connectedCalendar.readOnly, invalidAt: credential.invalidAt })
+    .from(connectedCalendar)
+    .innerJoin(credential, eq(credential.id, connectedCalendar.credentialId))
+    .where(and(eq(connectedCalendar.id, id), eq(connectedCalendar.userId, userId)));
+  return row ? { readOnly: row.readOnly, invalid: row.invalidAt !== null } : null;
+}
+
 /** IDs/UIDs of external events that mirror this host's own bookings (TEAM-004: co-hosted too). */
 async function ownEventIds(db: Database, userId: string, window: Interval, appHost: string): Promise<Set<string>> {
   const rows = await db
@@ -124,6 +138,7 @@ export async function getExternalBusy(
   const required = input.requireCalendar ?? isCalendarRequired({ id: input.userId });
   const mode = busyModeFor(input.maxAgeMs);
   assertCalendarsUsable(calendars, required);
+  if (required) assertDestinationUsable(await destinationState(deps.db, input.userId, input.eventTypeId), required);
   if (!calendars.length) return { busy: [], degraded: false };
   const now = deps.now();
   const results = new Map<string, BusyInterval[]>();

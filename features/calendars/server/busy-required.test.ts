@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { calendarBusyCache, connectedCalendar } from "@/db/schema";
+import { calendarBusyCache, connectedCalendar, destinationCalendar, eventType } from "@/db/schema";
 import { CalendarUnavailableError } from "@/lib/calendars/safety";
 
 const withCredential = vi.fn();
@@ -15,7 +15,10 @@ type Cal = { id: string; credentialId: string; externalId: string; name: string;
 const cal = (over: Partial<Cal> = {}): Cal => ({ id: "c1", credentialId: "k1", externalId: "ext", name: "Julie Gmail", provider: "google", invalidAt: null, checkConflicts: true, overrideFor: null, ...over });
 
 /** Minimal drizzle stand-in: select().from(table)... resolves to the rows for that table. */
-function fakeDb(calendars: Cal[], cacheRow?: { busy: { start: number; end: number }[]; fetchedAt: Date }) {
+type Dest = { etDest?: string | null; userDest?: string | null; row?: { readOnly: boolean; invalidAt: Date | null } | null };
+const HEALTHY_DEST: Dest = { etDest: null, userDest: "d1", row: { readOnly: false, invalidAt: null } };
+
+function fakeDb(calendars: Cal[], cacheRow?: { busy: { start: number; end: number }[]; fetchedAt: Date }, dest: Dest = HEALTHY_DEST) {
   const chain = (rows: unknown[]) => {
     const c: Record<string, unknown> = {};
     for (const m of ["innerJoin", "leftJoin", "where", "orderBy"]) c[m] = () => c;
@@ -24,13 +27,21 @@ function fakeDb(calendars: Cal[], cacheRow?: { busy: { start: number; end: numbe
     return c;
   };
   return {
-    select: () => ({ from: (table: unknown) => chain(table === connectedCalendar ? calendars : table === calendarBusyCache ? (cacheRow ? [cacheRow] : []) : []) }),
+    select: (fields?: Record<string, unknown>) => ({
+      from: (table: unknown) => {
+        if (table === eventType) return chain([{ dest: dest.etDest ?? null }]);
+        if (table === destinationCalendar) return chain(dest.userDest ? [{ connectedCalendarId: dest.userDest }] : []);
+        // The destination lookup selects readOnly; the conflict-calendar lookup selects checkConflicts.
+        if (table === connectedCalendar && fields && "readOnly" in fields) return chain(dest.row ? [dest.row] : []);
+        return chain(table === connectedCalendar ? calendars : table === calendarBusyCache ? (cacheRow ? [cacheRow] : []) : []);
+      },
+    }),
     insert: () => ({ values: () => ({ onConflictDoUpdate: () => Promise.resolve() }) }),
   };
 }
 
 const deps = (db: unknown) => ({ db, env: { APP_URL: "https://cal.example.com" }, now: () => NOW }) as never;
-const ask = (db: unknown, extra: { maxAgeMs?: number; requireCalendar?: boolean }) =>
+const ask = (db: unknown, extra: { maxAgeMs?: number; requireCalendar?: boolean; eventTypeId?: string }) =>
   getExternalBusy(deps(db), { userId: "u1", window, timeZone: "UTC", ...extra });
 
 // Braces matter: returning the mock from beforeEach makes vitest call it as a cleanup hook after
@@ -62,6 +73,31 @@ describe("getExternalBusy for a required host", () => {
     withCredential.mockRejectedValue(new Error("boom"));
     const db = fakeDb([cal()], { busy: [], fetchedAt: new Date(NOW - 3_600_000) });
     await expect(ask(db, { requireCalendar: true })).rejects.toMatchObject({ reason: "provider_failed" });
+  });
+
+  it("refuses booking and display when no destination calendar is set, without calling the provider", async () => {
+    const db = fakeDb([cal()], undefined, { etDest: null, userDest: null, row: null });
+    await expect(ask(db, { requireCalendar: true, maxAgeMs: 30_000, eventTypeId: "e1" })).rejects.toMatchObject({ reason: "missing" });
+    await expect(ask(db, { requireCalendar: true })).rejects.toMatchObject({ reason: "missing" });
+    expect(withCredential).not.toHaveBeenCalled();
+  });
+
+  it("refuses a read-only destination and a dangling event-type override", async () => {
+    const readOnly = fakeDb([cal()], undefined, { ...HEALTHY_DEST, row: { readOnly: true, invalidAt: null } });
+    await expect(ask(readOnly, { requireCalendar: true, maxAgeMs: 30_000 })).rejects.toMatchObject({ reason: "missing" });
+    const dangling = fakeDb([cal()], undefined, { etDest: "gone", userDest: "d1", row: null });
+    await expect(ask(dangling, { requireCalendar: true, maxAgeMs: 30_000, eventTypeId: "e1" })).rejects.toMatchObject({ reason: "missing" });
+  });
+
+  it("refuses a destination whose credential was revoked", async () => {
+    const db = fakeDb([cal()], undefined, { ...HEALTHY_DEST, row: { readOnly: false, invalidAt: new Date(NOW - 1000) } });
+    await expect(ask(db, { requireCalendar: true, maxAgeMs: 30_000 })).rejects.toMatchObject({ reason: "disconnected" });
+  });
+
+  it("optional hosts are not asked for a destination", async () => {
+    const db = fakeDb([cal()], undefined, { etDest: null, userDest: null, row: null });
+    withCredential.mockResolvedValue({ ext: [] });
+    expect((await ask(db, { requireCalendar: false })).busy).toEqual([]);
   });
 
   it("healthy calendar returns the provider's busy times", async () => {

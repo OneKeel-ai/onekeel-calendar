@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertCalendarsUsable,
+  assertDestinationUsable,
   busyModeFor,
   CalendarUnavailableError,
   isCalendarRequired,
@@ -50,6 +51,20 @@ describe("assertCalendarsUsable", () => {
   it("optional hosts keep the old behaviour (no calendar / revoked calendar do not throw)", () => {
     expect(reason(() => assertCalendarsUsable([], false))).toBeNull();
     expect(reason(() => assertCalendarsUsable([cal({ invalid: true })], false))).toBeNull();
+  });
+});
+
+describe("assertDestinationUsable (somewhere to write the booking)", () => {
+  it("required host with no destination, or a read-only one, is refused", () => {
+    expect(reason(() => assertDestinationUsable(null, true))).toBe("missing");
+    expect(reason(() => assertDestinationUsable({ readOnly: true, invalid: false }, true))).toBe("missing");
+  });
+  it("revoked destination credential is 'disconnected'", () => {
+    expect(reason(() => assertDestinationUsable({ readOnly: false, invalid: true }, true))).toBe("disconnected");
+  });
+  it("writable valid destination passes; optional hosts are never checked", () => {
+    expect(reason(() => assertDestinationUsable({ readOnly: false, invalid: false }, true))).toBeNull();
+    expect(reason(() => assertDestinationUsable(null, false))).toBeNull();
   });
 });
 

@@ -49,6 +49,20 @@ export function assertCalendarsUsable(calendars: readonly CalendarState[], requi
   if (bad.length) throw new CalendarUnavailableError("disconnected", bad.map((c) => c.name));
 }
 
+export type DestinationState = { readOnly: boolean; invalid: boolean };
+
+/**
+ * A required host must also have somewhere to WRITE the booking: a destination calendar (the
+ * event type's override, else the host's default) that exists, is theirs, is writable and whose
+ * credential is valid. Otherwise a booking would be accepted but never reach their calendar.
+ * `destination` is null when none is configured or the configured one no longer exists.
+ */
+export function assertDestinationUsable(destination: DestinationState | null | undefined, required: boolean): void {
+  if (!required) return;
+  if (!destination || destination.readOnly) throw new CalendarUnavailableError("missing");
+  if (destination.invalid) throw new CalendarUnavailableError("disconnected");
+}
+
 /** Booking/holding passes a finite maxAgeMs; the display endpoint passes Infinity. */
 export type BusyMode = "booking" | "display";
 export const busyModeFor = (maxAgeMs: number | undefined): BusyMode => (Number.isFinite(maxAgeMs ?? Number.POSITIVE_INFINITY) ? "booking" : "display");

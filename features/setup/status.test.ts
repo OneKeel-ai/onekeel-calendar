@@ -16,6 +16,9 @@ describe("calendarStatus", () => {
       healthy: false,
     });
   });
+  it("requires a writable destination for the calendar event", () => {
+    expect(calendarStatus([{ invalid: false, calendars: [{ name: "Read only", checkConflicts: true, isDestination: false }] }])).toMatchObject({ state: "attention", healthy: false });
+  });
   it("is healthy with a checked calendar and names the destination", () => {
     const s = calendarStatus([good]);
     expect(s).toMatchObject({ state: "done", healthy: true, checked: 1, destination: "Work" });
