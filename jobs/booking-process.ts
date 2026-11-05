@@ -1,6 +1,6 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import type { Database } from "@/db/client";
-import { booking } from "@/db/schema";
+import { booking, bookingReference } from "@/db/schema";
 import { type BookingEmailEvent, buildBookingEmails } from "@/features/bookings/server/notifications";
 import { type BookingDetails, type BookingRow, findBookingById } from "@/features/bookings/server/service";
 import type { IntegrationDeps } from "@/features/calendars/server/credentials";
@@ -44,6 +44,21 @@ export class RetrySyncError extends Error {
 async function seriesRows(db: Database, payload: BookingProcessPayload, first: BookingRow): Promise<BookingRow[]> {
   if (!payload.seriesId) return [first];
   return db.select().from(booking).where(eq(booking.recurringSeriesId, payload.seriesId)).orderBy(asc(booking.startAt));
+}
+
+/**
+ * Proof that a required host's meetings really are on their calendar: every booking has a synced
+ * calendar reference with an external id. "No sync failures" is not enough (the destination may
+ * have vanished since booking, and seat joins skip the sync).
+ */
+async function calendarProofMissing(db: Database, bookingIds: string[]): Promise<boolean> {
+  if (!bookingIds.length) return true; // nothing to prove with: fail closed
+  const refs = await db
+    .select({ bookingId: bookingReference.bookingId, kind: bookingReference.kind, externalId: bookingReference.externalId, status: bookingReference.status })
+    .from(bookingReference)
+    .where(inArray(bookingReference.bookingId, bookingIds));
+  const proven = new Set(refs.filter((r) => r.kind === "calendar" && r.externalId && r.status === "synced").map((r) => r.bookingId));
+  return bookingIds.some((id) => !proven.has(id));
 }
 
 async function syncOne(deps: BookingProcessDeps, payload: BookingProcessPayload, details: BookingDetails): Promise<SyncOutcome> {
@@ -153,9 +168,12 @@ export function createBookingProcessHandler(deps: BookingProcessDeps) {
       // is sent or scheduled. Requests awaiting approval, cancellations and rejections don't claim
       // a calendar event, so they are unaffected.
       const confirms = payload.event !== "requested" && payload.event !== "cancelled" && payload.event !== "rejected";
-      if (confirms && outcome.failures.length && isCalendarRequired({ id: details.host.id, email: details.host.email })) {
-        logger.error("booking.confirmation_withheld", { jobId: job.id, bookingId: payload.bookingId, bookingEvent: payload.event, syncFailures: outcome.failures.length, retryable: outcome.retryable });
-        continue;
+      if (confirms && isCalendarRequired({ id: details.host.id, email: details.host.email })) {
+        const unproven = outcome.failures.length > 0 || (await calendarProofMissing(deps.db, all.map((d) => d.booking.id)));
+        if (unproven) {
+          logger.error("booking.confirmation_withheld", { jobId: job.id, bookingId: payload.bookingId, bookingEvent: payload.event, syncFailures: outcome.failures.length, retryable: outcome.retryable });
+          continue;
+        }
       }
 
       const series = payload.seriesId ? all.map((d) => d.booking) : undefined;

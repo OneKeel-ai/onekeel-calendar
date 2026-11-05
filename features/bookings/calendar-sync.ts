@@ -4,14 +4,15 @@
  */
 export type SyncView = "confirmed" | "finishing" | "failed";
 
-/** How long a booking may wait for its calendar event before the page stops saying "finishing". */
+/** How long after the last change a missing, pending or failed calendar event still counts as "finishing" (it may be retrying). */
 export const SYNC_GRACE_MS = 5 * 60_000;
 
 export function syncView(input: {
   required: boolean;
   bookingStatus: string;
   upcoming: boolean;
-  createdAt: number;
+  /** Latest of the booking's own update time and its calendar references' update times (host approval resets it). */
+  changedAt: number;
   now: number;
   /** Statuses of this booking's calendar references. */
   calendarRefs: readonly string[];
@@ -19,6 +20,5 @@ export function syncView(input: {
   // Cancelled, declined, awaiting host or payment, past, or an optional-calendar host: unchanged.
   if (!input.required || input.bookingStatus !== "accepted" || !input.upcoming) return "confirmed";
   if (input.calendarRefs.includes("synced")) return "confirmed";
-  if (input.calendarRefs.includes("failed")) return "failed";
-  return input.now - input.createdAt < SYNC_GRACE_MS ? "finishing" : "failed";
+  return input.now - input.changedAt < SYNC_GRACE_MS ? "finishing" : "failed";
 }

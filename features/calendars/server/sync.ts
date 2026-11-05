@@ -156,6 +156,9 @@ export async function syncCreated(deps: IntegrationDeps, details: BookingDetails
 
 async function createCalendarEvent(deps: IntegrationDeps, details: BookingDetails, existing: Reference | undefined, zoomUrl: string | undefined): Promise<SyncOutcome> {
   const b = details.booking;
+  if (b.locationKind === "google_meet" && deps.env.GOOGLE_MEET_ENABLED === false) {
+    return { failures: ["Automatic Google Meet is not enabled here. Choose a custom meeting link."], retryable: false };
+  }
   const wantsVideo = b.locationKind === "google_meet" || b.locationKind === "ms_teams";
   const dest = await destinationFor(deps, details);
   if (!dest) return { failures: wantsVideo ? ["No destination calendar for the video link"] : [], retryable: false };

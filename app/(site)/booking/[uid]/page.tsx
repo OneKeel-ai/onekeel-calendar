@@ -54,9 +54,9 @@ export default async function BookingPage({ params, searchParams }: PageProps<"/
   const required = isCalendarRequired({ id: b.organizerId });
   const refs =
     required && b.status === "accepted" && upcoming
-      ? await getDb().select({ status: bookingReference.status }).from(bookingReference).where(and(eq(bookingReference.bookingId, b.id), eq(bookingReference.kind, "calendar")))
+      ? await getDb().select({ status: bookingReference.status, updatedAt: bookingReference.updatedAt }).from(bookingReference).where(and(eq(bookingReference.bookingId, b.id), eq(bookingReference.kind, "calendar")))
       : [];
-  const sync = syncView({ required, bookingStatus: b.status, upcoming, createdAt: b.createdAt.getTime(), now, calendarRefs: refs.map((r) => r.status) });
+  const sync = syncView({ required, bookingStatus: b.status, upcoming, changedAt: Math.max(b.updatedAt.getTime(), ...refs.map((r) => r.updatedAt.getTime())), now, calendarRefs: refs.map((r) => r.status) });
   const confirmed = sync === "confirmed";
   const location = canManage ? b.locationValue : null;
   const icsUrl = `/api/bookings/${encodeURIComponent(uid)}/ics${tokenValue ? `?token=${encodeURIComponent(tokenValue)}` : ""}`;
@@ -96,7 +96,7 @@ export default async function BookingPage({ params, searchParams }: PageProps<"/
         {sync === "finishing" && <BookingSyncRefresh />}
         {sync === "failed" && (
           <p className="text-sm text-muted-foreground">
-            We couldn’t add this time to {host.name}’s calendar, so it isn’t confirmed yet. You won’t get a calendar invitation for it. Please contact {host.name} directly.
+            This time is not confirmed on the host’s calendar yet. Check for a confirmation email or contact {host.name}.
           </p>
         )}
         {isNew && !cancelled && !pending && confirmed && <p className="text-sm text-muted-foreground">A calendar invitation is on its way to your email.</p>}
