@@ -87,9 +87,9 @@ function SocialButtons({ providers, next = DEFAULT_LANDING }: { providers: Socia
   );
 }
 
-export function LoginForm({ providers, next = DEFAULT_LANDING }: { providers: SocialProvider[]; next?: string }) {
+export function LoginForm({ providers, next = DEFAULT_LANDING, passwordAllowed = true }: { providers: SocialProvider[]; next?: string; passwordAllowed?: boolean }) {
   const router = useRouter();
-  const [mode, setMode] = useState<"password" | "magic">("password");
+  const [mode, setMode] = useState<"password" | "magic">(passwordAllowed ? "password" : "magic");
   const { pending, status, run } = useSubmit();
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -133,7 +133,7 @@ export function LoginForm({ providers, next = DEFAULT_LANDING }: { providers: So
           </Button>
         </form>
         <div className="flex flex-col items-center gap-1 text-center text-sm">
-          <Button type="button" variant="link" className="text-muted-foreground" onClick={() => setMode(mode === "password" ? "magic" : "password")}>
+          {passwordAllowed && <><Button type="button" variant="link" className="text-muted-foreground" onClick={() => setMode(mode === "password" ? "magic" : "password")}>
             {mode === "password" ? "Sign in with an email link instead" : "Sign in with a password instead"}
           </Button>
           <Button asChild variant="link" className="text-muted-foreground">
@@ -144,7 +144,8 @@ export function LoginForm({ providers, next = DEFAULT_LANDING }: { providers: So
             <Link href="/signup" className="font-medium text-foreground underline-offset-4 hover:underline">
               Sign up
             </Link>
-          </p>
+          </p></>}
+          {!passwordAllowed && <p className="text-xs text-muted-foreground">Use your OneKeel work email. Your account is created when you first sign in.</p>}
         </div>
       </CardContent>
     </Card>

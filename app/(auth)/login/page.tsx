@@ -7,6 +7,7 @@ import { visibleSocialProviders } from "@/features/auth/server/queries";
 import { getSession } from "@/lib/auth/session";
 import { getEnv } from "@/lib/env";
 import { safeRedirectPath } from "@/lib/security/redirect";
+import { accessConfigFromProcessEnv } from "@/lib/auth/access";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -30,7 +31,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
           <AlertDescription>{notice.text}</AlertDescription>
         </Alert>
       )}
-      <LoginForm providers={await visibleSocialProviders(getDb(), getEnv())} next={next} />
+      <LoginForm providers={await visibleSocialProviders(getDb(), getEnv())} next={next} passwordAllowed={!accessConfigFromProcessEnv().restricted} />
     </div>
   );
 }

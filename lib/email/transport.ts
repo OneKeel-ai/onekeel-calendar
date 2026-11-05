@@ -24,7 +24,7 @@ export function createSmtpMailer(
     const key = env.MAILGUN_API_KEY;
     const domain = env.MAILGUN_DOMAIN;
     const endpoint = env.MAILGUN_REGION === "EU" ? "https://api.eu.mailgun.net" : "https://api.mailgun.net";
-    const mime = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: "unix" });
+    const mime = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: "windows" });
     return {
       async send({ calendar, ...email }) {
         const message = await mime.sendMail({

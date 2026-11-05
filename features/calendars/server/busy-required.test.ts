@@ -33,7 +33,11 @@ const deps = (db: unknown) => ({ db, env: { APP_URL: "https://cal.example.com" }
 const ask = (db: unknown, extra: { maxAgeMs?: number; requireCalendar?: boolean }) =>
   getExternalBusy(deps(db), { userId: "u1", window, timeZone: "UTC", ...extra });
 
-beforeEach(() => withCredential.mockReset());
+// Braces matter: returning the mock from beforeEach makes vitest call it as a cleanup hook after
+// every test, which re-runs mockRejectedValue(boom) as an unhandled rejection.
+beforeEach(() => {
+  withCredential.mockReset();
+});
 
 describe("getExternalBusy for a required host", () => {
   it("refuses when no calendar is configured (no free slots, no booking)", async () => {

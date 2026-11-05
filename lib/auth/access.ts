@@ -43,7 +43,7 @@ export function parseAccessConfig(source: Record<string, string | undefined>): A
   const emails = new Set(rawEmails.map(normalizeEmail).filter((e): e is string => e !== null));
   const domains = new Set(rawDomains.map(normalizeDomain).filter((d): d is string => d !== null));
   return {
-    restricted: rawEmails.length > 0 || rawDomains.length > 0,
+    restricted: rawEmails.length > 0 || rawDomains.length > 0 || tokens(source.ADMIN_EMAIL).length > 0,
     emails,
     domains,
     adminEmail: normalizeEmail(source.ADMIN_EMAIL),

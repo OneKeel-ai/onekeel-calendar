@@ -52,6 +52,12 @@ describe("isEmailAllowed", () => {
 });
 
 describe("mayBecomeAdmin / normalizeEmail", () => {
+  it("ADMIN_EMAIL alone is restricted to that address", () => {
+    const adminOnly = parseAccessConfig({ ADMIN_EMAIL: "josh.copp@onekeel.ai" });
+    expect(adminOnly.restricted).toBe(true);
+    expect(isEmailAllowed(adminOnly, "josh.copp@onekeel.ai")).toBe(true);
+    expect(isEmailAllowed(adminOnly, "outsider@example.com")).toBe(false);
+  });
   it("is open to anyone without ADMIN_EMAIL, otherwise only that address", () => {
     expect(mayBecomeAdmin(OPEN_ACCESS, "x@y.com")).toBe(true);
     expect(mayBecomeAdmin(team, "JOSH.COPP@onekeel.ai")).toBe(true);
