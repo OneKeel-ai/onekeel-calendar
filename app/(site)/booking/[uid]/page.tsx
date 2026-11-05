@@ -1,4 +1,4 @@
-import { CalendarPlus, Check, X } from "lucide-react";
+import { CalendarPlus, Check, Clock, TriangleAlert, X } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -6,13 +6,18 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db/client";
+import { bookingReference } from "@/db/schema";
+import { syncView } from "@/features/bookings/calendar-sync";
+import { BookingSyncRefresh } from "@/features/bookings/components/booking-sync-refresh";
 import { CancelBookingForm, LocalTime } from "@/features/bookings/components/manage-booking";
 import { mapLink } from "@/features/bookings/location";
 import { bookingPagePath } from "@/features/bookings/server/booking-path";
 import { attendeeMayCancel, remainingOccurrences } from "@/features/bookings/server/decisions";
 import { findBookingForManage } from "@/features/bookings/server/service";
 import { googleCalendarUrl, outlookCalendarUrl } from "@/lib/calendar-links";
+import { isCalendarRequired } from "@/lib/calendars/safety";
 import { requestTime } from "@/lib/clock";
 
 // The URL carries the manage token: never send it as a referrer, never index it.
@@ -45,6 +50,14 @@ export default async function BookingPage({ params, searchParams }: PageProps<"/
   // Where to book this event type again: /team/{team}/{slug} for team event types, not the
   // organizer's own page (that one 404s for them). Only looked up when a link is shown.
   const bookingPath = selfReschedule || cancelled ? await bookingPagePath(getDb(), b.eventTypeId, b.organizerId) : null;
+  // A host who must have a working calendar: confirm only once the calendar event exists.
+  const required = isCalendarRequired({ id: b.organizerId });
+  const refs =
+    required && b.status === "accepted" && upcoming
+      ? await getDb().select({ status: bookingReference.status }).from(bookingReference).where(and(eq(bookingReference.bookingId, b.id), eq(bookingReference.kind, "calendar")))
+      : [];
+  const sync = syncView({ required, bookingStatus: b.status, upcoming, createdAt: b.createdAt.getTime(), now, calendarRefs: refs.map((r) => r.status) });
+  const confirmed = sync === "confirmed";
   const location = canManage ? b.locationValue : null;
   const icsUrl = `/api/bookings/${encodeURIComponent(uid)}/ics${tokenValue ? `?token=${encodeURIComponent(tokenValue)}` : ""}`;
   // Without the manage token nobody learns who booked: show the event type, not the booking title.
@@ -57,10 +70,10 @@ export default async function BookingPage({ params, searchParams }: PageProps<"/
         <CardContent className="flex flex-col gap-5">
         <div className="flex items-center gap-3">
           <span
-            className={`flex size-10 items-center justify-center rounded-full ${cancelled ? "bg-destructive/10 text-destructive" : "bg-success/10 text-success"}`}
+            className={`flex size-10 items-center justify-center rounded-full ${cancelled || sync === "failed" ? "bg-destructive/10 text-destructive" : sync === "finishing" ? "bg-muted text-muted-foreground" : "bg-success/10 text-success"}`}
             aria-hidden
           >
-            {cancelled ? <X className="size-5" /> : <Check className="size-5" />}
+            {cancelled ? <X className="size-5" /> : sync === "failed" ? <TriangleAlert className="size-5" /> : sync === "finishing" ? <Clock className="size-5" /> : <Check className="size-5" />}
           </span>
           <h1 className="text-xl font-semibold">
             {b.status === "rejected"
@@ -69,14 +82,24 @@ export default async function BookingPage({ params, searchParams }: PageProps<"/
                 ? b.rescheduled
                   ? "This booking was rescheduled"
                   : "This booking is cancelled"
-                : pending
+                : sync === "finishing"
+                  ? "Finishing your booking"
+                  : sync === "failed"
+                    ? "Calendar confirmation needs attention"
+                    : pending
                   ? "Waiting for the host to confirm"
                   : isNew
                     ? "You are scheduled"
                     : "Your booking"}
           </h1>
         </div>
-        {isNew && !cancelled && !pending && <p className="text-sm text-muted-foreground">A calendar invitation is on its way to your email.</p>}
+        {sync === "finishing" && <BookingSyncRefresh />}
+        {sync === "failed" && (
+          <p className="text-sm text-muted-foreground">
+            We couldn’t add this time to {host.name}’s calendar, so it isn’t confirmed yet. You won’t get a calendar invitation for it. Please contact {host.name} directly.
+          </p>
+        )}
+        {isNew && !cancelled && !pending && confirmed && <p className="text-sm text-muted-foreground">A calendar invitation is on its way to your email.</p>}
         {pending && <p className="text-sm text-muted-foreground">{host.name} needs to accept this request. You’ll get an email with the calendar invitation once they do.</p>}
         {series.length > 1 && <p className="text-sm text-muted-foreground">Part of a recurring booking: {series.length} upcoming occurrences.</p>}
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
@@ -118,7 +141,7 @@ export default async function BookingPage({ params, searchParams }: PageProps<"/
           )}
         </dl>
 
-        {upcoming && !pending && (
+        {upcoming && !pending && confirmed && (
           <>
           <Separator />
           <div className="flex flex-col gap-2">

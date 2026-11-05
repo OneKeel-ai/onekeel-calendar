@@ -6,6 +6,7 @@ OneKeel's team meeting scheduler, forked from OpenCalendar.
 - Use **/schedule** to select free times and copy them into an email.
 - The optional [Gmail extension](docs/onekeel-gmail.md) inserts selected times directly into a draft. It never sends mail.
 - Shared Google calendars with edit permission can be selected as the booking destination.
+- Video meetings use your usual pasted meeting link. Automatic Google Meet is disabled here because the connected calendar rejects that conference type.
 - Email time choices are a snapshot; availability is checked again before booking.
 - Team sign-in is restricted to configured work addresses; no password preregistration.
 - Required calendar failures pause bookings instead of treating the host as free.

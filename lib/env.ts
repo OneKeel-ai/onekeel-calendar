@@ -55,6 +55,7 @@ const baseSchema = z.object({
   MAILGUN_API_KEY: optionalString,
   MAILGUN_DOMAIN: optionalString,
   MAILGUN_REGION: z.enum(["US", "EU"]).default("US"),
+  GOOGLE_MEET_ENABLED: booleanish(true),
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,
   MICROSOFT_CLIENT_ID: optionalString,

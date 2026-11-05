@@ -11,7 +11,7 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npx vitest run --project unit lib/auth lib/calendars features/calendars features/setup features/embed/email
+RUN npx vitest run --project unit lib/auth lib/calendars features/calendars features/setup features/embed/email features/bookings features/event-types/meet-policy.test.ts jobs/booking-process.test.ts
 RUN npm run build
 
 FROM node:24-alpine AS runtime

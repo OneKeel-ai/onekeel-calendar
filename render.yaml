@@ -41,6 +41,8 @@ services:
         value: gseomail.onekeel.ai
       - key: MAILGUN_API_KEY
         sync: false
+      - key: GOOGLE_MEET_ENABLED
+        value: false
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET

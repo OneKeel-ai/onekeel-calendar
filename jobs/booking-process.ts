@@ -5,6 +5,7 @@ import { type BookingEmailEvent, buildBookingEmails } from "@/features/bookings/
 import { type BookingDetails, type BookingRow, findBookingById } from "@/features/bookings/server/service";
 import type { IntegrationDeps } from "@/features/calendars/server/credentials";
 import { type SyncOutcome, syncCancelled, syncCreated, syncRescheduled } from "@/features/calendars/server/sync";
+import { isCalendarRequired } from "@/lib/calendars/safety";
 import type { Cipher } from "@/lib/crypto/encryption";
 import { stableJobId } from "@/lib/jobs/job-id";
 import { type BookingProcessPayload, bookingProcessPayload, type EmailRequest } from "@/lib/jobs/queues";
@@ -109,7 +110,8 @@ function emailEvent(deps: BookingProcessDeps, payload: BookingProcessPayload, de
  * - A booking that should be active but no longer is gets nothing; if it was cancelled while
  *   the sync ran, whatever the sync created is removed again (no resurrected events).
  * - Transient provider failures throw so pg-boss retries (every step is idempotent); on the last
- *   attempt everything else goes out anyway and the failure stays visible (INT-012).
+ *   attempt everything else goes out anyway and the failure stays visible (INT-012) - except for
+ *   hosts in CALENDAR_REQUIRED_HOSTS, whose confirmations/effects are withheld after a failed sync.
  */
 export function createBookingProcessHandler(deps: BookingProcessDeps) {
   const now = deps.now ?? Date.now;
@@ -145,6 +147,16 @@ export function createBookingProcessHandler(deps: BookingProcessDeps) {
       }
       const lastAttempt = (job.retryCount ?? 0) >= (job.retryLimit ?? 0);
       if (outcome.retryable && !lastAttempt) throw new RetrySyncError(outcome.failures.length);
+
+      // Required hosts: never confirm a meeting that did not reach their calendar. Transient failures
+      // already retried above; a permanent (or final-attempt) failure is logged loudly and nothing
+      // is sent or scheduled. Requests awaiting approval, cancellations and rejections don't claim
+      // a calendar event, so they are unaffected.
+      const confirms = payload.event !== "requested" && payload.event !== "cancelled" && payload.event !== "rejected";
+      if (confirms && outcome.failures.length && isCalendarRequired({ id: details.host.id, email: details.host.email })) {
+        logger.error("booking.confirmation_withheld", { jobId: job.id, bookingId: payload.bookingId, bookingEvent: payload.event, syncFailures: outcome.failures.length, retryable: outcome.retryable });
+        continue;
+      }
 
       const series = payload.seriesId ? all.map((d) => d.booking) : undefined;
       await sendEmails(deps, payload, emailEvent(deps, payload, details, series, now()), lastAttempt);

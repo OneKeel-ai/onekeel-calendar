@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { useTimeZones } from "@/lib/use-time-zones";
 import { FormField } from "@/components/form-field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -78,6 +78,14 @@ export function EventTypeFormView(props: {
     set({ locations: form.locations.map((l, i) => (i === index ? { ...l, value } : l)) });
   const usedKinds = new Set(form.locations.map((l) => l.kind));
   const timeZones = useTimeZones();
+  const [googleMeetEnabled, setGoogleMeetEnabled] = useState(false);
+  useEffect(() => {
+    let active = true;
+    fetch("/api/public/features").then((r) => r.ok ? r.json() : null).then((v) => {
+      if (active) setGoogleMeetEnabled(v?.googleMeetEnabled === true);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   const toggleExtra = (d: number) =>
     set({
@@ -332,6 +340,7 @@ export function EventTypeFormView(props: {
             <AlertDescription>{errors.locations}</AlertDescription>
           </Alert>
         )}
+        {!googleMeetEnabled && <p className="text-xs text-muted-foreground">For video meetings, add your usual meeting link. Automatic Google Meet is not enabled here.</p>}
         <ul className="flex flex-col gap-2">
           {form.locations.map((loc, i) => {
             const needs = LOCATION_NEEDS_VALUE[loc.kind];
@@ -384,7 +393,7 @@ export function EventTypeFormView(props: {
                 <SelectValue placeholder="Choose…" />
               </SelectTrigger>
               <SelectContent>
-                {LOCATION_KINDS.filter((k) => !usedKinds.has(k)).map((k) => (
+                {LOCATION_KINDS.filter((k) => !usedKinds.has(k) && (k !== "google_meet" || googleMeetEnabled)).map((k) => (
                   <SelectItem key={k} value={k}>
                     {LOCATION_LABELS[k]}
                   </SelectItem>

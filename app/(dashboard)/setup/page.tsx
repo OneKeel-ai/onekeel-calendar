@@ -80,6 +80,11 @@ export default async function SetupPage() {
         </p>
       </section>
 
+      <section className={SECTION} aria-labelledby="video-title">
+        <h2 id="video-title" className={H2}>Video meeting links</h2>
+        <p className={P}>Choose Custom meeting link in a meeting type and paste your usual video-call link. Automatic Google Meet is not enabled on this instance.</p>
+      </section>
+
       <section className={SECTION} aria-labelledby="settings-title">
         <h2 id="settings-title" className={H2}>
           Other settings

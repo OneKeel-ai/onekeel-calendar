@@ -33,6 +33,9 @@ export const PHONE_PATTERN = /^\+[1-9]\d{6,14}$/; // E.164
 export const locationSchema = z
   .object({ kind: z.enum(LOCATION_KINDS), value: z.string().trim().max(500).nullable() })
   .superRefine((loc, ctx) => {
+    if (loc.kind === "google_meet" && process.env.GOOGLE_MEET_ENABLED === "false") {
+      ctx.addIssue({ code: "custom", path: ["kind"], message: "Automatic Google Meet is not enabled here. Use your usual meeting link instead." });
+    }
     const needs = LOCATION_NEEDS_VALUE[loc.kind];
     if (needs && !loc.value) ctx.addIssue({ code: "custom", path: ["value"], message: "Enter the location details" });
     if (needs === "url" && loc.value && !/^https?:\/\/\S+$/i.test(loc.value)) {
