@@ -142,7 +142,7 @@ cp .env.example .env   # set APP_URL, AUTH_SECRET, ENCRYPTION_KEY, POSTGRES_PASS
 OPENCALENDAR_IMAGE=ghcr.io/kudretyilmazz/opencalendar:1 docker compose up -d --no-build
 ```
 
-The app listens on `127.0.0.1:3000`. Put a TLS reverse proxy (e.g. Caddy) in front and create your account right away: the first account becomes the administrator. Full guide: [self-hosting](./docs/03-architecture/self-hosting.md).
+The app listens on `127.0.0.1:3000`. Put a TLS reverse proxy (e.g. Caddy) in front and create your account right away: the configured admin address becomes the administrator. Full guide: [self-hosting](./docs/03-architecture/self-hosting.md).
 
 **Coolify:** paste [`deploy/coolify/opencalendar.yaml`](./deploy/coolify/opencalendar.yaml) into a *Docker Compose Empty* resource, set your SMTP values and deploy. Coolify generates the secrets and the domain ([details](./docs/03-architecture/self-hosting.md#coolify)).
 
