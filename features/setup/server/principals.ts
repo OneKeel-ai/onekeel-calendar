@@ -4,6 +4,7 @@ import { teamEventTypeTarget } from "@/features/embed/targets";
 import { durationsOf } from "@/features/event-types/server/service";
 import { listTeamEventTypes, type TeamEventTypeView } from "@/features/teams/server/event-types";
 import { TeamError } from "@/features/teams/server/access";
+import { memberLabel } from "@/features/teams/server/availability";
 import { listMyTeams, membersOf } from "@/features/teams/server/service";
 import type { ScheduleType, SchedulingPrincipal } from "../types";
 
@@ -25,17 +26,19 @@ type Member = { userId: string; name: string };
 export function groupTeamTypes(teams: readonly { team: TeamInfo; members: readonly Member[]; types: readonly TeamEventTypeView[] }[]): SchedulingPrincipal[] {
   const groups = new Map<string, SchedulingPrincipal & { hostName: string; teamName: string }>();
   for (const { team, members, types } of teams) {
-    const memberIds = new Set(members.map((m) => m.userId));
+    const memberNames = new Map(members.map((m) => [m.userId, m.name]));
     for (const et of types) {
       if (!et.enabled || et.linkOnly || et.parentId || (et.schedulingType !== "collective" && et.schedulingType !== "round_robin")) continue;
       if (et.hosts.length !== 1) continue;
       const host = et.hosts[0];
       // A host who left the team can't be booked through it.
-      if (!memberIds.has(host.userId)) continue;
+      const memberName = memberNames.get(host.userId);
+      if (memberName === undefined) continue;
       const target = teamEventTypeTarget(team.slug, { slug: et.slug, title: et.title, durations: durationsOf(et), schedulingType: et.schedulingType });
       if (!target) continue;
       const id = principalId(team.id, host.userId);
-      const group = groups.get(id) ?? { id, label: host.name, teamId: team.id, types: [], hostName: host.name, teamName: team.name };
+      const hostName = host.name?.trim() || memberName;
+      const group = groups.get(id) ?? { id, label: hostName, teamId: team.id, types: [], hostName, teamName: team.name };
       group.types.push({ id: et.id, title: et.title, hidden: et.hidden, target } satisfies ScheduleType);
       groups.set(id, group);
     }
@@ -54,7 +57,7 @@ export async function loadTeamPrincipals(db: Database, userId: string): Promise<
   const loaded = await Promise.all(
     teams.map(async (t) => ({
       team: { id: t.id, name: t.name, slug: t.slug },
-      members: (await membersOf(db, t.id)).map((m) => ({ userId: m.userId, name: m.name })),
+      members: (await membersOf(db, t.id)).map((m) => ({ userId: m.userId, name: memberLabel(m.name, m.email) })),
       // Membership-checked by the service itself; a membership removed mid-load just drops the team.
       types: await listTeamEventTypes(db, userId, t.id).catch((error: unknown) => {
         if (error instanceof TeamError) return [];

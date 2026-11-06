@@ -26,6 +26,9 @@ export type MemberAvailability = {
 
 export const MAX_VIEW_DAYS = 7;
 
+/** Display label for a member: their real name, or (when blank) only the email's local part, never the whole email. */
+export const memberLabel = (name: string | null | undefined, email: string) => name?.trim() || email.split("@")[0];
+
 export async function teamAvailability(
   db: Database,
   actorId: string,
@@ -56,7 +59,7 @@ export async function teamAvailability(
       const clip = (i: Interval) => ({ start: Math.max(i.start, span.start), end: Math.min(i.end, span.end) });
       return {
         userId: m.userId,
-        name: m.name,
+        name: memberLabel(m.name, m.email),
         timeZone: schedule?.timeZone ?? null,
         working: working.map(clip).filter((i) => i.end > i.start),
         busy: busy.map(clip).filter((i) => i.end > i.start),

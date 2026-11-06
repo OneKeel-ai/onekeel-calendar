@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { memberLabel } from "@/features/teams/server/availability";
 import { groupTeamTypes, principalId } from "./server/principals";
 
 const team = { id: "team1", name: "Ekko", slug: "ekko" };
@@ -65,5 +66,21 @@ describe("groupTeamTypes", () => {
       { team: other, members, types: [et({ id: "c2" })] },
     ]);
     expect(groups.map((g) => g.label).toSorted()).toEqual(["Charlie (Ekko)", "Charlie (Keel)"]);
+  });
+
+  it("labels a host with a blank name by the member fallback, never blank or a whole email", () => {
+    const blank = [...members, { userId: "sage", name: memberLabel("", "andrew.sage@onekeel.ai") }];
+    const groups = groupTeamTypes([{ team, members: blank, types: [et({ id: "s1", hosts: [host("sage", "  ")] })] }]);
+    expect(groups.map((g) => g.label)).toEqual(["andrew.sage"]);
+    expect(groups[0].id).toBe(principalId("team1", "sage"));
+  });
+});
+
+describe("memberLabel", () => {
+  it("uses the real name, else only the email local part", () => {
+    expect(memberLabel("Andrew Sage", "andrew.sage@onekeel.ai")).toBe("Andrew Sage");
+    expect(memberLabel("", "andrew.sage@onekeel.ai")).toBe("andrew.sage");
+    expect(memberLabel("   ", "andrew.sage@onekeel.ai")).toBe("andrew.sage");
+    expect(memberLabel(null, "andrew.sage@onekeel.ai")).toBe("andrew.sage");
   });
 });
