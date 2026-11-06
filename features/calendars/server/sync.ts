@@ -7,6 +7,7 @@ import type { CalendarEventInput } from "@/lib/integrations/types";
 import { newId } from "@/lib/ids";
 import { errorSummary, logger } from "@/lib/logger";
 import { invalidateBusyCache } from "./busy";
+import { zoomCredentialFor } from "./conferencing";
 import { type IntegrationDeps, withCredential } from "./credentials";
 
 /**
@@ -45,14 +46,6 @@ async function destinationFor(deps: IntegrationDeps, details: BookingDetails): P
     .innerJoin(credential, eq(credential.id, connectedCalendar.credentialId))
     .where(and(eq(connectedCalendar.id, id), eq(connectedCalendar.userId, details.host.id)));
   return row && !row.readOnly && !row.invalidAt ? row : null;
-}
-
-async function zoomCredential(deps: IntegrationDeps, userId: string): Promise<string | null> {
-  const [row] = await deps.db
-    .select({ id: credential.id, invalidAt: credential.invalidAt })
-    .from(credential)
-    .where(and(eq(credential.userId, userId), eq(credential.provider, "zoom")));
-  return row && !row.invalidAt ? row.id : null;
 }
 
 function eventInput(details: BookingDetails, appHost: string, meetingUrl?: string): CalendarEventInput {
@@ -121,7 +114,7 @@ export async function syncCreated(deps: IntegrationDeps, details: BookingDetails
 
   let meetingUrl: string | undefined = exists("conferencing") ? (prior("conferencing")?.meetingUrl ?? undefined) : undefined;
   if (b.locationKind === "zoom" && !exists("conferencing")) {
-    const credentialId = await zoomCredential(deps, details.host.id);
+    const credentialId = await zoomCredentialFor(deps.db, details.host.id);
     if (!credentialId) failures.push("Zoom is not connected");
     else {
       try {
@@ -139,6 +132,9 @@ export async function syncCreated(deps: IntegrationDeps, details: BookingDetails
 
   const calendarRef = prior("calendar");
   if (exists("calendar")) meetingUrl ??= calendarRef?.meetingUrl ?? undefined;
+  // Never put a Zoom booking on a calendar without the Zoom link it promised: the event waits
+  // (a transient Zoom failure retries both), and required hosts' confirmations stay withheld.
+  else if (b.locationKind === "zoom" && !meetingUrl) failures.push("Calendar: not created without the Zoom meeting link");
   else {
     const created = await createCalendarEvent(deps, details, calendarRef, meetingUrl);
     failures.push(...created.failures);

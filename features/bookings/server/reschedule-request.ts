@@ -6,7 +6,7 @@ import type { EmailRequest } from "@/lib/jobs/queues";
 import { prefers12Hour } from "@/lib/format";
 import { canRequestReschedule } from "../reschedulable";
 import { bookingPagePath } from "./booking-path";
-import { isHostOf } from "./core";
+import { isBookingManager } from "./core";
 import { bookingLocation, manageUrl } from "./notifications";
 import { type BookingDetails, findBookingById } from "./service";
 
@@ -32,7 +32,7 @@ export async function requestReschedule(
       .select({ b: booking, disableRescheduling: eventType.disableRescheduling, seatsPerSlot: eventType.seatsPerSlot })
       .from(booking)
       .innerJoin(eventType, eq(eventType.id, booking.eventTypeId))
-      .where(and(eq(booking.id, input.bookingId), isHostOf(input.hostId), inArray(booking.status, [...RESCHEDULABLE_STATUSES]), gt(booking.endAt, new Date(input.now))))
+      .where(and(eq(booking.id, input.bookingId), isBookingManager(input.hostId), inArray(booking.status, [...RESCHEDULABLE_STATUSES]), gt(booking.endAt, new Date(input.now))))
       .for("update", { of: booking });
     if (!row) return { ok: false, reason: "NOT_FOUND" } as const;
     if (!canRequestReschedule(row.b, row) || !row.b.manageTokenSealed) return { ok: false, reason: "NOT_MOVABLE" } as const;

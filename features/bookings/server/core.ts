@@ -84,6 +84,19 @@ export async function lockHosts(tx: Tx, hostIds: readonly string[]) {
 export const isHostOf = (userId: string) =>
   sql`EXISTS (SELECT 1 FROM booking_host bh WHERE bh.booking_id = "booking"."id" AND bh.user_id = ${userId})`;
 
+/** Team roles that may manage (list, accept/reject, cancel, ask to reschedule) the team's bookings. */
+export const BOOKING_MANAGER_ROLES = ["owner", "admin"] as const;
+
+/**
+ * "This user may manage the booking": a host of it (`isHostOf`) OR, right now, an owner/admin of
+ * the team that owns the booking's event type (an assistant working for the team's hosts).
+ * Read live on every query, so removing the role or the membership revokes access immediately.
+ * Grants no booking_host row, ICS invite or email. Deliberately NOT folded into `isHostOf`:
+ * busy-time and own-event matching must stay per actual host.
+ */
+export const isBookingManager = (userId: string) =>
+  sql`(${isHostOf(userId)} OR EXISTS (SELECT 1 FROM event_type et INNER JOIN membership m ON m.team_id = et.team_id WHERE et.id = "booking"."event_type_id" AND et.team_id IS NOT NULL AND m.user_id = ${userId} AND m.role IN ('owner', 'admin')))`;
+
 export async function deactivate(tx: Tx, bookingId: string) {
   await tx.update(bookingHost).set({ active: false }).where(eq(bookingHost.bookingId, bookingId));
 }

@@ -2,7 +2,7 @@ import { and, asc, eq, gt, inArray } from "drizzle-orm";
 import type { Database, Tx } from "@/db/client";
 import { attendee, booking, eventType } from "@/db/schema";
 import { hashToken, tokenMatches } from "@/lib/ids";
-import { ACTIVE, type AttendeeRow, BookingFailure, type BookingRow, deactivate, isHostOf, MIN } from "./core";
+import { ACTIVE, type AttendeeRow, BookingFailure, type BookingRow, deactivate, isBookingManager, isHostOf, MIN } from "./core";
 import { refreshDisplay } from "./host-data";
 
 /**
@@ -24,7 +24,7 @@ async function decide(
     const [probe] = await tx
       .select({ seriesId: booking.recurringSeriesId })
       .from(booking)
-      .where(and(eq(booking.id, input.bookingId), isHostOf(input.hostId)));
+      .where(and(eq(booking.id, input.bookingId), isBookingManager(input.hostId)));
     if (!probe) throw new BookingFailure("NOT_FOUND");
     // Series rows are always locked in start order (same as series cancel): no deadlocks.
     const locked = probe.seriesId ? await lockSeries(tx, probe.seriesId) : await tx.select().from(booking).where(eq(booking.id, input.bookingId)).for("update");

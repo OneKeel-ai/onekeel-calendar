@@ -6,7 +6,7 @@ import type { HostInput, Interval, Slot } from "@/lib/availability/types";
 import { hashToken, newId, tokenMatches } from "@/lib/ids";
 import { durationsOf, type EventTypeView, type PublicHost, toEngineEvent } from "@/features/event-types/server/service";
 import { type ScheduleView, scheduleForEventType, toScheduleInput } from "@/features/schedules/server/service";
-import { ACTIVE, assertPlausibleStart, BookingFailure, type AttendeeRow, type BookingRow, deactivate, type ExternalBusyFn, HOLD_TTL_MS, isHostOf, MIN, validationWindow, withExternal } from "./core";
+import { ACTIVE, assertPlausibleStart, BookingFailure, type AttendeeRow, type BookingRow, deactivate, type ExternalBusyFn, HOLD_TTL_MS, isBookingManager, MIN, validationWindow, withExternal } from "./core";
 import { canRequestReschedule } from "../reschedulable";
 import { attendeeMayCancel, findSeat, lockSeries, policyFor } from "./decisions";
 import { invalidateHostDisplayCache, loadHostInput, loadHostInputForDisplay, refreshDisplay } from "./host-data";
@@ -357,9 +357,9 @@ export async function cancelSeriesByAttendee(
   }));
 }
 
-/** Host cancel from the dashboard (BKG-010); any host of the booking can cancel. */
+/** Host cancel from the dashboard (BKG-010); any host of the booking, or a team owner/admin of its event type, can cancel. */
 export async function cancelByHost(db: Database, input: { hostId: string; bookingId: string; reason?: string; now: number; onCommit?: CancelHook }) {
-  return cancel(db, and(eq(booking.id, input.bookingId), isHostOf(input.hostId)), {
+  return cancel(db, and(eq(booking.id, input.bookingId), isBookingManager(input.hostId)), {
     by: "host",
     reason: input.reason,
     now: input.now,
@@ -412,10 +412,10 @@ function tabWhere(tab: BookingTab, now: Date) {
   }[tab];
 }
 
-/** The host's bookings (any role on the booking) narrowed by the dashboard's filters. */
+/** Bookings the user hosts or manages as a team owner/admin, narrowed by the dashboard's filters. */
 function filterWhere(hostId: string, filter: Omit<HostBookingFilter, "tab">) {
   return and(
-    isHostOf(hostId),
+    isBookingManager(hostId),
     filter.eventTypeId ? eq(booking.eventTypeId, filter.eventTypeId) : undefined,
     teamWhere(filter.team),
     filter.from !== undefined ? gte(booking.startAt, new Date(filter.from)) : undefined,

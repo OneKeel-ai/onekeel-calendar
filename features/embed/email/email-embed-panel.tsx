@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Combobox, timeZoneOptions } from "@/components/ui/combobox";
@@ -15,11 +15,25 @@ import { useTimeZones } from "@/lib/use-time-zones";
 import type { EmbedTarget } from "../target";
 import { EmailCopyActions } from "./email-copy-actions";
 import { EmailEmbedError, emailPreviewDocument, MAX_EMAIL_SLOTS, renderEmailEmbed } from "./email-html";
+import { CalendarOverlay } from "./calendar-overlay";
 import { EmailSlotPicker } from "./email-slot-picker";
+import { busyDuring, type LoadBusy, type ScopedSelection, selectionIn, shownPeople, toggleViewed, weekWindow } from "./planner";
 import { dayKey, groupByDay, toggleSlot } from "./selection";
+import { useViewedCalendars } from "./use-viewed-calendars";
 import { useWeekSlots } from "./use-week-slots";
 
 const NOTE_MAX = 500;
+
+/**
+ * Optional planning view (used by Email times): lets the sender view teammates' busy time next to
+ * the host's free times. Display only; it never changes the target, host or offered times.
+ */
+export type EmailPlannerOptions = {
+  /** Who the meeting is booked with, e.g. "You" or the executive's name. */
+  hostLabel: string;
+  /** Reads viewed calendars for a window; must be stable between renders. */
+  loadBusy?: LoadBusy;
+};
 
 type Env = { appUrl: string; timeZone: string; locale: string; hour12: boolean; now: number };
 
@@ -44,9 +58,12 @@ function readEnv(appUrl: string | undefined): Env {
 export function EmailEmbedPanel({
   target,
   appUrl,
+  planner,
 }: {
   target: EmbedTarget;
   /** The instance's canonical URL (APP_URL); links must not depend on how the dashboard was reached. */ appUrl?: string;
+  /** Adds the optional calendar view. Without it the panel behaves exactly as in the embed dialog. */
+  planner?: EmailPlannerOptions;
 }) {
   if (!target.booking || target.booking.durations.length === 0) {
     return (
@@ -56,19 +73,40 @@ export function EmailEmbedPanel({
       </p>
     );
   }
-  return <EmailEmbedEditor target={target} booking={target.booking} appUrl={appUrl} />;
+  return <EmailEmbedEditor target={target} booking={target.booking} appUrl={appUrl} planner={planner} />;
 }
 
 type Booking = NonNullable<EmbedTarget["booking"]>;
 
-function EmailEmbedEditor({ target, booking, appUrl }: { target: EmbedTarget; booking: Booking; appUrl?: string }) {
+function EmailEmbedEditor({
+  target,
+  booking,
+  appUrl,
+  planner,
+}: {
+  target: EmbedTarget;
+  booking: Booking;
+  appUrl?: string;
+  planner?: EmailPlannerOptions;
+}) {
   const [env, setEnv] = useState<Env | null>(null);
   const [timeZone, setTimeZone] = useState<string | null>(null);
   const [hour12, setHour12] = useState(false);
   const [duration, setDuration] = useState(booking.durations[0] ?? 0);
   const [weekStart, setWeekStart] = useState<LocalDate | null>(null);
   const [activeDay, setActiveDay] = useState<string | null>(null);
-  const [selected, setSelected] = useState<readonly string[]>([]);
+  // Picks are tied to this booking page: if the target ever changes in place, old picks are dropped
+  // instead of being offered on another host's calendar.
+  const scope = target.calLink;
+  const [picked, setPicked] = useState<ScopedSelection>({ scope, slots: [] });
+  const selected = selectionIn(picked, scope);
+  const setSelected = useCallback(
+    (next: readonly string[] | ((prev: readonly string[]) => readonly string[])) =>
+      setPicked((prev) => ({ scope, slots: typeof next === "function" ? next(selectionIn(prev, scope)) : next })),
+    [scope],
+  );
+  const [plannerOpen, setPlannerOpen] = useState(Boolean(planner?.loadBusy));
+  const [viewed, setViewed] = useState<readonly string[]>([]);
   const [note, setNote] = useState("");
   const timeZones = useTimeZones();
 
@@ -83,6 +121,17 @@ function EmailEmbedEditor({ target, booking, appUrl }: { target: EmbedTarget; bo
   }, [appUrl]);
 
   const week = useWeekSlots({ booking, duration, timeZone, weekStart });
+  const viewWindow = useMemo(() => (weekStart && timeZone ? weekWindow(weekStart, timeZone) : null), [weekStart, timeZone]);
+  const calendars = useViewedCalendars(
+    planner?.loadBusy,
+    viewWindow?.start ?? null,
+    viewWindow?.end ?? null,
+    Boolean(planner?.loadBusy) && plannerOpen,
+  );
+  const viewedPeople = useMemo(
+    () => (plannerOpen ? shownPeople(calendars.members, viewed) : []),
+    [plannerOpen, calendars.members, viewed],
+  );
 
   const days = useMemo(
     () => (weekStart ? Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)) : []),
@@ -130,6 +179,8 @@ function EmailEmbedEditor({ target, booking, appUrl }: { target: EmbedTarget; bo
     }
   }, [env, target, duration, timeZone, hour12, selected, note]);
 
+  const busyNames = useCallback((slot: string) => busyDuring(slot, duration, viewedPeople), [duration, viewedPeople]);
+
   if (!env || !timeZone || !weekStart) {
     return (
       <div className="flex flex-col gap-3" aria-busy="true">
@@ -165,7 +216,7 @@ function EmailEmbedEditor({ target, booking, appUrl }: { target: EmbedTarget; bo
   const html = email && "html" in email ? email.html : "";
   const text = email && "text" in email ? email.text : "";
 
-  return (
+  const editor = (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <div className="flex min-w-0 flex-col gap-4">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -226,6 +277,7 @@ function EmailEmbedEditor({ target, booking, appUrl }: { target: EmbedTarget; bo
           onToggle={(slot) => setSelected((prev) => toggleSlot(prev, slot, MAX_EMAIL_SLOTS))}
           week={week}
           prefs={prefs}
+          busyNames={viewedPeople.length > 0 ? busyNames : undefined}
         />
 
         <div className="flex items-center justify-between gap-2">
@@ -288,6 +340,33 @@ function EmailEmbedEditor({ target, booking, appUrl }: { target: EmbedTarget; bo
           </details>
         )}
       </div>
+    </div>
+  );
+
+  if (!planner) return editor;
+  return (
+    <div className="flex flex-col gap-6">
+      {planner.loadBusy && (
+        <CalendarOverlay
+          open={plannerOpen}
+          onOpen={setPlannerOpen}
+          hostLabel={planner.hostLabel}
+          calendars={calendars}
+          viewed={viewed}
+          onToggleViewed={(userId) => setViewed((prev) => toggleViewed(prev, userId))}
+          days={days}
+          timeZone={timeZone}
+          prefs={prefs}
+          duration={duration}
+          offered={week.status === "ready" ? week.slots : []}
+          selected={selected}
+          limit={MAX_EMAIL_SLOTS}
+          onToggleSlot={(slot) => setSelected((prev) => toggleSlot(prev, slot, MAX_EMAIL_SLOTS))}
+          onWeek={changeWeek}
+          canGoBack={formatDate(weekStart) > today}
+        />
+      )}
+      {editor}
     </div>
   );
 }

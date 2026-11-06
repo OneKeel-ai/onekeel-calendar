@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { getDb } from "@/db/client";
+import { ExecutiveSetupSteps } from "@/features/setup/components/executive-setup";
 import { SetupChecklist } from "@/features/setup/components/setup-checklist";
 import { loadSetup } from "@/features/setup/server/load";
 import { requireUser } from "@/lib/auth/session";
@@ -65,24 +66,16 @@ export default async function SetupPage() {
         </div>
       </section>
 
-      <section className={SECTION} aria-labelledby="shared-title">
-        <h2 id="shared-title" className={H2}>
-          Shared calendars and teams
-        </h2>
-        <p className={P}>
-          To coordinate for someone else, ask them to share their Google calendar with your OneKeel work account and give
-          you permission to make changes to events. Then connect your own Google account on the{" "}
-          <Link href="/settings/calendars" className="font-medium text-foreground underline underline-offset-2">Calendars</Link>{" "}
-          page. Choose their shared calendar under "Use for new bookings" and select the calendars that should block busy
-          times. You do not need their password. The{" "}
-          <Link href="/teams" className="font-medium text-foreground underline underline-offset-2">Teams</Link>{" "}
-          area is for meetings that need multiple hosts.
-        </p>
-      </section>
+      <ExecutiveSetupSteps />
 
       <section className={SECTION} aria-labelledby="video-title">
         <h2 id="video-title" className={H2}>Video meeting links</h2>
-        <p className={P}>Choose Custom meeting link in a meeting type and paste your usual video-call link. Automatic Google Meet is not enabled on this instance.</p>
+        <p className={P}>
+          Connect Zoom on the{" "}
+          <Link href="/settings/calendars" className="font-medium text-foreground underline underline-offset-2">Calendars</Link>{" "}
+          page, then choose Zoom as the location in a meeting type. Each booking gets its own Zoom link, made from the
+          host&apos;s Zoom account. Or choose Custom meeting link and paste your usual video-call link. Automatic Google Meet is not enabled on this instance.
+        </p>
       </section>
 
       <section className={SECTION} aria-labelledby="settings-title">

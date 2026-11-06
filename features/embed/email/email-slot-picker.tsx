@@ -22,6 +22,8 @@ type EmailSlotPickerProps = {
   onToggle: (slot: string) => void;
   week: WeekSlotsState & { retry: () => void };
   prefs: FormatPrefs;
+  /** Viewed calendars busy during a slot. Only marks the chip; the time stays offered and pickable. */
+  busyNames?: (slot: string) => readonly string[];
 };
 
 /** Calendar dates are formatted at noon UTC in UTC, so the weekday never shifts with the zone. */
@@ -29,7 +31,7 @@ const dayLabel = (day: LocalDate, prefs: FormatPrefs) => formatShortDate(wallToU
 
 /** Week navigation, one button per day (with its free-slot count) and toggle chips for the day's slots. */
 export function EmailSlotPicker(props: EmailSlotPickerProps) {
-  const { days, canGoBack, onWeek, activeDay, onActiveDay, slotsByDay, selected, limit, onToggle, week, prefs } = props;
+  const { days, canGoBack, onWeek, activeDay, onActiveDay, slotsByDay, selected, limit, onToggle, week, prefs, busyNames } = props;
   const first = days[0];
   const last = days[days.length - 1];
   const loading = week.status === "loading" || week.status === "idle";
@@ -98,6 +100,8 @@ export function EmailSlotPicker(props: EmailSlotPickerProps) {
         <div className="flex flex-wrap gap-2" role="group" aria-label="Available times">
           {daySlots.map((slot) => {
             const pressed = selected.includes(slot);
+            const busy = busyNames?.(slot) ?? [];
+            const time = formatTime(Date.parse(slot), prefs);
             return (
               <Toggle
                 key={slot}
@@ -106,13 +110,22 @@ export function EmailSlotPicker(props: EmailSlotPickerProps) {
                 pressed={pressed}
                 disabled={!pressed && full}
                 onPressedChange={() => onToggle(slot)}
+                aria-label={busy.length ? `${time}, busy: ${busy.join(", ")}` : undefined}
+                title={busy.length ? `Busy: ${busy.join(", ")}` : undefined}
                 className="rounded-md tabular-nums data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
               >
-                {formatTime(Date.parse(slot), prefs)}
+                {time}
+                {busy.length > 0 && <span aria-hidden className="ml-0.5 inline-block size-1.5 rounded-full bg-amber-500" />}
               </Toggle>
             );
           })}
         </div>
+      )}
+      {busyNames && daySlots.length > 0 && (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span aria-hidden className="inline-block size-1.5 rounded-full bg-amber-500" />
+          Someone you are viewing is busy then. The host is still free.
+        </p>
       )}
     </div>
   );

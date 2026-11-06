@@ -7,6 +7,7 @@ import { getDb, type Tx } from "@/db/client";
 import { booking, routingFormResponse } from "@/db/schema";
 import { fieldErrors } from "@/lib/actions";
 import { clientIp, overLimit } from "@/lib/security/public-limits";
+import { hostsMissingZoom } from "@/features/calendars/server/conferencing";
 import { externalBusyFor } from "@/features/calendars/server/runtime";
 import { cipherFromEnv } from "@/lib/crypto/encryption";
 import { getEnv } from "@/lib/env";
@@ -49,6 +50,8 @@ const FAILURE_MESSAGES: Record<string, string> = {
   CALENDAR_UNAVAILABLE: "Online booking is temporarily unavailable because the host's calendar can't be checked. Please contact them directly.",
   INVALID_RECURRENCE: "That number of occurrences isn't available for this event.",
 };
+
+const ZOOM_UNAVAILABLE = "Zoom isn't available for this booking right now. Please choose another location or contact the host directly.";
 
 async function resolve(key: TargetKey) {
   const db = getDb();
@@ -140,6 +143,11 @@ export async function createBookingAction(raw: CreateBookingPayload): Promise<Cr
         : { ok: false, message: "Please choose a location." };
     }
     throw error;
+  }
+  // A chosen Zoom location needs every possible host's own Zoom connection: refuse before
+  // booking rather than book with no link or another account's meeting.
+  if (location?.kind === "zoom" && (await hostsMissingZoom(target.db, teamHosts ? teamHosts.map((h) => h.host.id) : [target.host.id])).length) {
+    return { ok: false, message: ZOOM_UNAVAILABLE };
   }
   const cipher = cipherFromEnv(getEnv());
   try {

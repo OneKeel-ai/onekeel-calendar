@@ -7,6 +7,7 @@ import { getProvider } from "@/lib/integrations/registry";
 import type { BusyInterval, ProviderId } from "@/lib/integrations/types";
 import { errorSummary, logger } from "@/lib/logger";
 import { isHostOf } from "@/features/bookings/server/core";
+import { assertConferencingReady } from "./conferencing";
 import { type IntegrationDeps, withCredential } from "./credentials";
 
 /**
@@ -139,6 +140,8 @@ export async function getExternalBusy(
   const mode = busyModeFor(input.maxAgeMs);
   assertCalendarsUsable(calendars, required);
   if (required) assertDestinationUsable(await destinationState(deps.db, input.userId, input.eventTypeId), required);
+  // A Zoom-only event type needs this host's own valid Zoom connection, required calendar or not.
+  await assertConferencingReady(deps.db, input.userId, input.eventTypeId);
   if (!calendars.length) return { busy: [], degraded: false };
   const now = deps.now();
   const results = new Map<string, BusyInterval[]>();
