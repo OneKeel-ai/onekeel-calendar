@@ -42,13 +42,13 @@ export function calendarStatus(connections: readonly CalendarFacts[]): CalendarS
   const checked = all.filter((c) => c.checkConflicts).length;
   const destination = all.find((c) => c.isDestination)?.name ?? null;
   if (connections.length === 0)
-    return { state: "todo", healthy: false, checked: 0, destination, detail: "No calendar connected. Online booking stays off until one is." };
+    return { state: "todo", healthy: false, checked: 0, destination, detail: "No calendar connected. Booking for meetings you host stays off until you connect one." };
   if (connections.some((c) => c.invalid))
-    return { state: "attention", healthy: false, checked, destination, detail: "A calendar needs to be reconnected. Online booking is paused until it is." };
+    return { state: "attention", healthy: false, checked, destination, detail: "A calendar needs to be reconnected. Booking for meetings you host is paused until it is." };
   if (checked === 0)
     return { state: "attention", healthy: false, checked, destination, detail: "Connected, but no calendar is checked for conflicts. Turn at least one on." };
   if (!destination)
-    return { state: "attention", healthy: false, checked, destination, detail: "Choose a writable destination calendar for new bookings. Online booking stays paused until one is selected." };
+    return { state: "attention", healthy: false, checked, destination, detail: "Choose a writable destination calendar for new bookings. Booking for meetings you host stays paused until one is selected." };
   return {
     state: "done",
     healthy: true,
@@ -65,14 +65,14 @@ export function buildSteps(facts: SetupFacts): SetupStep[] {
   const emailReady = Boolean(facts.username) && meetingsDone && calendar.healthy;
 
   const profileDetail = !facts.username
-    ? "Pick a username. It is part of every booking link."
+    ? "Pick a username. It is part of the link to your own booking page."
     : facts.timeZone === "UTC"
       ? "Your time zone is still UTC. Set your own so hours and emails read correctly."
       : `Booking link name: ${facts.username}. Time zone: ${facts.timeZone.replaceAll("_", " ")}.`;
 
   const meetingsDetail =
     facts.enabledEventTypes === 0
-      ? "No meeting type is switched on yet."
+      ? "You have no meeting type of your own switched on yet."
       : facts.workingHourRanges === 0
         ? `${plural(facts.enabledEventTypes, "meeting type")} on, but your weekly hours are empty, so no times can be offered.`
         : `${plural(facts.enabledEventTypes, "meeting type")} on, with weekly hours set.`;
@@ -94,7 +94,7 @@ export function buildSteps(facts: SetupFacts): SetupStep[] {
       state: emailReady ? "done" : "todo",
       detail: emailReady
         ? "Ready. Pick free times and paste them into an email."
-        : "Needs a username, meeting type, weekly hours, and a working calendar first.",
+        : "For meetings you host, this needs a username, meeting type, weekly hours, and a working calendar. Scheduling for a connected team host doesn't need any of these.",
       href: "/schedule",
       action: "Open email times",
     },

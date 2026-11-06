@@ -52,6 +52,11 @@ describe("interactive calendar planning", () => {
     expect(offers(rendered)).toHaveLength(0);
   });
 
+  it("shows when selected times belong to another week", () => {
+    const { rendered } = setup({ selected: [slot, "2026-11-16T15:00:00.000Z"] });
+    expect(rendered.find((p) => p.role === "status")?.children).toBe("2 of 10 times selected. 1 in other weeks.");
+  });
+
   it("enforces the offer limit but lets an existing pick be removed", () => {
     const selected = Array.from({ length: 10 }, (_, i) => new Date(Date.parse(slot) + i * 30 * 60_000).toISOString());
     const next = new Date(Date.parse(slot) + 10 * 30 * 60_000).toISOString();

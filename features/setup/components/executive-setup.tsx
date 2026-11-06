@@ -22,7 +22,8 @@ export function ExecutiveSetupSteps({ compact = false }: { compact?: boolean }) 
       <p className={P}>
         Each executive shows up under Scheduling for only after these steps. To send times for someone else, the meeting
         type has to belong to them. Clients then book straight onto their
-        calendar, with their own Zoom link, and you never need to attend.
+        calendar, with their own Zoom link, and you never need to attend. You don&apos;t need your own calendar or Zoom
+        for this. Connect your own calendar only if you want to see your own busy time.
       </p>
       <ol className={`${P} list-decimal pl-5`}>
         <li>

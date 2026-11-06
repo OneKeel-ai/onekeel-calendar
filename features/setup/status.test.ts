@@ -40,4 +40,21 @@ describe("buildSteps", () => {
     expect(steps.find((s) => s.id === "profile")?.state).toBe("todo");
     expect(steps.find((s) => s.id === "meetings")?.href).toBe("/availability");
   });
+  it("words personal requirements as being about meetings you host, not all scheduling", () => {
+    const steps = buildSteps({ username: null, timeZone: "UTC", connections: [], enabledEventTypes: 0, workingHourRanges: 0 });
+    for (const s of steps) expect(s.detail).not.toMatch(/online booking/i);
+    expect(steps.find((s) => s.id === "calendar")?.detail).toMatch(/meetings you host/);
+    expect(steps.find((s) => s.id === "profile")?.detail).toMatch(/your own booking page/);
+    const email = steps.find((s) => s.id === "email")?.detail ?? "";
+    expect(email).toMatch(/meetings you host/);
+    expect(email).toMatch(/connected team host doesn't need any of these/);
+  });
+  it("keeps every unhealthy calendar message scoped to meetings you host", () => {
+    const broken = [
+      [],
+      [{ invalid: true, calendars: [] }],
+      [{ invalid: false, calendars: [{ name: "Read only", checkConflicts: true, isDestination: false }] }],
+    ];
+    for (const c of broken) expect(calendarStatus(c).detail).not.toMatch(/online booking/i);
+  });
 });

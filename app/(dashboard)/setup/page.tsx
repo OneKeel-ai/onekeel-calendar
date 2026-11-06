@@ -25,15 +25,22 @@ export default async function SetupPage() {
       <header className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold tracking-[-0.01em]">Setup</h1>
         <p className="text-sm text-muted-foreground">
-          {left === 0 ? "Everything is ready. You can send times by email now." : `${left} ${left === 1 ? "thing" : "things"} left before you can send times by email.`}
+          {left === 0 ? "Everything is ready. You can send times by email now." : `${left} ${left === 1 ? "thing" : "things"} left before you can send times for meetings you host.`}
+        </p>
+        <p className={P}>
+          Scheduling for someone else? On{" "}
+          <Link href="/schedule" className="font-medium text-foreground underline underline-offset-2">Email times</Link>{" "}
+          you can send times for any team host who has connected their calendar. You don&apos;t need your own calendar or
+          Zoom for that. Connect your own calendar only if you want to see your own busy time there.
         </p>
       </header>
 
       {!calendar.healthy && (
         <Alert variant="destructive" className="border-destructive/40 bg-destructive/10">
           <AlertDescription>
-            Online booking is paused until a working calendar is connected. The app can&apos;t tell when you are busy, so it
-            offers no times rather than risk a double booking.
+            Booking for meetings you host is paused until you connect a working calendar. The app can&apos;t tell when you
+            are busy, so your own booking page offers no times rather than risk a double booking. Times for other hosts
+            use their calendars, not yours.
           </AlertDescription>
         </Alert>
       )}

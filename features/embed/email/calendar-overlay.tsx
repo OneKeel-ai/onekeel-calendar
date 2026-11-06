@@ -54,6 +54,9 @@ export function CalendarOverlay(props: CalendarOverlayProps) {
   const offeredFree = normalize(slotIntervals(offered, duration));
   const picks = slotIntervals(selected, duration);
   const first = days[0];
+  const visibleDays = new Set(days.map(formatDate));
+  const otherWeeks = selected.filter((slot) => !visibleDays.has(formatDate(localDateOf(Date.parse(slot), timeZone)))).length;
+  const selectionSummary = `${selected.length} of ${limit} times selected.${otherWeeks ? ` ${otherWeeks} in other weeks.` : ""}`;
 
   return (
     <section className="flex flex-col gap-3 rounded-md border border-border" aria-labelledby="planner-title">
@@ -66,10 +69,10 @@ export function CalendarOverlay(props: CalendarOverlayProps) {
       >
         <span className="flex flex-col">
           <span id="planner-title" className="text-sm font-medium">
-            View calendars (view only)
+            Plan meeting times
           </span>
           <span className="text-xs text-muted-foreground">
-            Optional. See teammates&apos; busy time next to the host&apos;s free times. Nobody you view is invited.
+            Pick the host&apos;s free times. Optionally compare other calendars without inviting their owners.
           </span>
         </span>
         <ChevronDown aria-hidden className={cn("size-4 shrink-0 transition-transform", open && "rotate-180")} />
@@ -114,7 +117,7 @@ export function CalendarOverlay(props: CalendarOverlayProps) {
                   const color = colorFor(people, p.userId);
                   return (
                     <label key={p.userId} htmlFor={id} className="flex items-center gap-2 text-sm">
-                      <Checkbox id={id} checked={viewed.includes(p.userId)} onCheckedChange={() => onToggleViewed(p.userId)} />
+                      <Checkbox id={id} aria-label={p.name} checked={viewed.includes(p.userId)} onCheckedChange={() => onToggleViewed(p.userId)} />
                       <span className={cn("inline-block size-2.5 rounded-sm", color.swatch)} aria-hidden />
                       {p.name}
                       {p.calendarUnavailable && <span className="text-xs text-muted-foreground">(calendar can&apos;t be read, shown as busy)</span>}
@@ -137,9 +140,12 @@ export function CalendarOverlay(props: CalendarOverlayProps) {
           </div>
 
           <div className="flex items-center justify-between gap-2" role="group" aria-label="Calendar week">
-            <p className="text-xs text-muted-foreground">
-              {first && `${dayLabel(first, prefs)} to ${dayLabel(days[days.length - 1], prefs)}`} · {duration} min. Click a free time to offer it.
-            </p>
+            <div className="flex flex-col gap-0.5 text-xs">
+              <p className="text-muted-foreground">
+                {first && `${dayLabel(first, prefs)} to ${dayLabel(days[days.length - 1], prefs)}`} · {duration} min. Click a free time to offer it.
+              </p>
+              <p role="status" className="font-medium">{selectionSummary}</p>
+            </div>
             <div className="flex gap-1">
               <Button type="button" variant="outline" size="icon" className="size-8 rounded-md" aria-label="Previous calendar week" disabled={!canGoBack} onClick={() => onWeek(-1)}><ChevronLeft className="size-4" /></Button>
               <Button type="button" variant="outline" size="icon" className="size-8 rounded-md" aria-label="Next calendar week" onClick={() => onWeek(1)}><ChevronRight className="size-4" /></Button>

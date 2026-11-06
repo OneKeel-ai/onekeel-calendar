@@ -42,7 +42,8 @@ export default async function SchedulePage() {
       {usable.length === 0 ? (
         <>
           <div className="flex flex-col items-start gap-3 rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
-            {username ? "You have no meeting type that is switched on yet." : "Choose a username first. It is part of every booking link."}
+            <p>No meeting hosts are ready to schedule here yet. To schedule for someone else, first accept their team invitation and follow the executive setup steps below.</p>
+            <p>{username ? "For meetings you host, add a meeting type of your own." : "For meetings you host, choose a username for your own booking page."}</p>
             <Button asChild className="h-8 rounded-md px-3 text-[13px]">
               <Link href={username ? "/event-types/new" : "/settings/profile"}>{username ? "Add a meeting type" : "Open profile"}</Link>
             </Button>
