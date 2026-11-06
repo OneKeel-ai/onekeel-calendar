@@ -46,8 +46,8 @@ describe("buildSteps", () => {
     expect(steps.find((s) => s.id === "calendar")?.detail).toMatch(/meetings you host/);
     expect(steps.find((s) => s.id === "profile")?.detail).toMatch(/your own booking page/);
     const email = steps.find((s) => s.id === "email")?.detail ?? "";
-    expect(email).toMatch(/meetings you host/);
-    expect(email).toMatch(/connected team host doesn't need any of these/);
+    expect(email).toMatch(/your personal booking page/);
+    expect(email).toMatch(/Team scheduling is separate/);
   });
   it("keeps every unhealthy calendar message scoped to meetings you host", () => {
     const broken = [

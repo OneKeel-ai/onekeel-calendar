@@ -72,7 +72,7 @@ export function buildSteps(facts: SetupFacts): SetupStep[] {
 
   const meetingsDetail =
     facts.enabledEventTypes === 0
-      ? "You have no meeting type of your own switched on yet."
+      ? "No personal meeting type is switched on yet."
       : facts.workingHourRanges === 0
         ? `${plural(facts.enabledEventTypes, "meeting type")} on, but your weekly hours are empty, so no times can be offered.`
         : `${plural(facts.enabledEventTypes, "meeting type")} on, with weekly hours set.`;
@@ -94,7 +94,7 @@ export function buildSteps(facts: SetupFacts): SetupStep[] {
       state: emailReady ? "done" : "todo",
       detail: emailReady
         ? "Ready. Pick free times and paste them into an email."
-        : "For meetings you host, this needs a username, meeting type, weekly hours, and a working calendar. Scheduling for a connected team host doesn't need any of these.",
+        : "For your personal booking page, finish your profile, meeting type, weekly hours and calendar connection. Team scheduling is separate: it uses the selected host's connected calendar and meeting type.",
       href: "/schedule",
       action: "Open email times",
     },

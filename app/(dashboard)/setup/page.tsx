@@ -25,7 +25,7 @@ export default async function SetupPage() {
       <header className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold tracking-[-0.01em]">Setup</h1>
         <p className="text-sm text-muted-foreground">
-          {left === 0 ? "Everything is ready. You can send times by email now." : `${left} ${left === 1 ? "thing" : "things"} left before you can send times for meetings you host.`}
+          {left === 0 ? "Your personal booking page is ready. You can send its times by email." : `${left} ${left === 1 ? "thing" : "things"} left to finish your personal booking page. Team scheduling is separate.`}
         </p>
         <p className={P}>
           Scheduling for someone else? On{" "}
