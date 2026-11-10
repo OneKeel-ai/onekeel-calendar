@@ -14,6 +14,11 @@ export const PUBLIC_LIMITS = {
   bookPerEmail: { windowMs: 60 * 60_000, max: 10 },
   /** Emails to an address listed as a guest; separate so nobody can burn someone's own quota. */
   bookAsGuest: { windowMs: 60 * 60_000, max: 10 },
+  /**
+   * Emails to someone a scheduling offer invites. Roomier than bookAsGuest because a teammate can
+   * be preset on many offers, but still capped so a forwarded link can't be used to flood them.
+   */
+  bookAsOfferGuest: { windowMs: 60 * 60_000, max: 30 },
   cancel: { windowMs: 60_000, max: 10 },
   routing: { windowMs: 60_000, max: 20 },
   /** Per routing form, across all clients: caps how fast anyone can fill a form's responses. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bookerSchema, slotsQuerySchema } from "./schemas";
+import { bookerSchema, createBookingSchema, slotsQuerySchema } from "./schemas";
 
 describe("booking schemas", () => {
   it("canonicalizes locales and falls back to en for invalid tags", () => {
@@ -14,5 +14,21 @@ describe("booking schemas", () => {
     expect(slotsQuerySchema.safeParse({ ...q, end: String(45 * 86_400_000) }).success).toBe(true);
     expect(slotsQuerySchema.safeParse({ ...q, end: String(46 * 86_400_000) }).success).toBe(false);
     expect(slotsQuerySchema.safeParse({ ...q, end: "0" }).success).toBe(false);
+  });
+
+  it("accepts only a url-safe scheduling offer id of up to 64 characters", () => {
+    const payload = {
+      username: "ada",
+      slug: "intro",
+      start: 0,
+      duration: 30,
+      booker: { name: "Grace", email: "grace@example.com", timeZone: "UTC" },
+      idempotencyKey: "6f1c1f9e-3c1a-4c3b-9a55-2d1d1c7b8e01",
+    };
+    expect(createBookingSchema.parse(payload).offer).toBeUndefined();
+    expect(createBookingSchema.parse({ ...payload, offer: "Ab_-9".repeat(12) }).offer).toBe("Ab_-9".repeat(12));
+    expect(createBookingSchema.safeParse({ ...payload, offer: "a".repeat(65) }).success).toBe(false);
+    expect(createBookingSchema.safeParse({ ...payload, offer: "has space" }).success).toBe(false);
+    expect(createBookingSchema.safeParse({ ...payload, offer: "a/b" }).success).toBe(false);
   });
 });

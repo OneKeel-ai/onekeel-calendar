@@ -1,10 +1,13 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { EmailEmbedPanel } from "@/features/embed/email/email-embed-panel";
+import { EMPTY_MEETING_DETAILS, type MeetingDetailsValue } from "@/features/embed/email/meeting-details";
 import { type LoadBusy, pickPrincipal, pickType, planKey } from "@/features/embed/email/planner";
+import { choiceStorage, readChoice, writeChoice } from "@/features/embed/email/schedule-choice";
 import { loadScheduleAvailability } from "../server/scheduling-actions";
 import type { SchedulingPrincipal } from "../types";
 import { ExecutiveSetupSteps } from "./executive-setup";
@@ -15,10 +18,15 @@ export type { ScheduleType } from "../types";
  * Picks who the times are for, then the meeting type, then shows the email times tool for it.
  * The host decides the booking page, calendar and video link. Changing the host or the meeting
  * type starts a fresh pick list, so times offered for one person can't carry over to another.
+ * The meeting title and invitees are kept across that change and saved again for the new type.
+ * The last host and meeting type are remembered per browser.
  */
 export function ScheduleWorkspace({ principals, appUrl }: { principals: SchedulingPrincipal[]; appUrl: string }) {
   const [principalId, setPrincipalId] = useState<string | null>(null);
   const [typeId, setTypeId] = useState<string | null>(null);
+  const [details, setDetails] = useState<MeetingDetailsValue>(EMPTY_MEETING_DETAILS);
+  // The remembered choice is read after mount (no storage on the server); the times tool waits for it.
+  const [restored, setRestored] = useState(false);
   const usable = principals.filter((p) => p.types.length > 0);
   const principal = pickPrincipal(principals, principalId);
   const type = principal ? pickType(principal.types, typeId) : undefined;
@@ -31,12 +39,28 @@ export function ScheduleWorkspace({ principals, appUrl }: { principals: Scheduli
     [viewTeamId],
   );
 
+  useEffect(() => {
+    const choice = readChoice(choiceStorage(), principals);
+    /* eslint-disable react-hooks/set-state-in-effect -- one-time sync from browser storage */
+    if (choice) {
+      setPrincipalId(choice.principalId);
+      setTypeId(choice.typeId);
+    }
+    setRestored(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [principals]);
+
   if (!principal || !type) return null;
   const self = principal.teamId === null;
 
   const choosePrincipal = (id: string) => {
     setPrincipalId(id);
     setTypeId(null); // another host's meeting types; start from their first
+    writeChoice(choiceStorage(), { principalId: id, typeId: null });
+  };
+  const chooseType = (id: string) => {
+    setTypeId(id);
+    writeChoice(choiceStorage(), { principalId: principal.id, typeId: id });
   };
 
   return (
@@ -60,7 +84,7 @@ export function ScheduleWorkspace({ principals, appUrl }: { principals: Scheduli
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="schedule-type">Meeting type</Label>
-            <Select value={type.id} onValueChange={setTypeId}>
+            <Select value={type.id} onValueChange={chooseType}>
               <SelectTrigger id="schedule-type" className="w-full rounded-md">
                 <SelectValue />
               </SelectTrigger>
@@ -92,12 +116,20 @@ export function ScheduleWorkspace({ principals, appUrl }: { principals: Scheduli
       </div>
 
       <div className="rounded-xl border border-border bg-card p-4 md:p-5">
-        <EmailEmbedPanel
-          key={planKey(principal.id, type.id)}
-          target={type.target}
-          appUrl={appUrl}
-          planner={{ hostLabel: self ? "you" : principal.label, loadBusy: viewTeamId ? loadBusy : undefined }}
-        />
+        {restored ? (
+          <EmailEmbedPanel
+            key={planKey(principal.id, type.id)}
+            target={type.target}
+            appUrl={appUrl}
+            planner={{ hostLabel: self ? "you" : principal.label, loadBusy: viewTeamId ? loadBusy : undefined }}
+            offer={{ eventTypeId: type.id, value: details, onChange: setDetails }}
+          />
+        ) : (
+          <div className="flex flex-col gap-3" aria-busy="true">
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-40 w-full" />
+          </div>
+        )}
       </div>
 
       {others.length === 0 ? (

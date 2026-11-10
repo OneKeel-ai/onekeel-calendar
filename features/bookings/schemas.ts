@@ -84,6 +84,8 @@ export const createBookingSchema = eventRefSchema.extend({
   captcha: z.string().max(2000).optional(),
   /** The routing-form response that led here (RTE-004). */
   routing: z.string().max(64).optional(),
+  /** Scheduling offer id from an emailed link: custom title and preset attendees, held server-side. */
+  offer: z.string().max(64).regex(/^[A-Za-z0-9_-]+$/).optional(),
 });
 
 export type CreateBookingPayload = z.input<typeof createBookingSchema>;

@@ -31,9 +31,11 @@ export type EmbedTarget = {
  * - `slot=<ISO 8601 UTC start>` opens the booking form for that start if it is still free,
  *   otherwise shows that day with a notice (added for the email embed);
  * - `layout=month|week|column` picks the calendar layout; the booker can switch (added);
+ * - `offer=<id>` books with a saved scheduling offer's title and attendees (email embed; the
+ *   content stays on the server, the link only names it);
  * - `embed=1&theme=…&brand=…&hideDetails=1` for the compact embed variant (existing, EMB-004).
  */
-export const BOOKING_LINK_PARAMS = ["date", "month", "duration", "slot", "layout"] as const;
+export const BOOKING_LINK_PARAMS = ["date", "month", "duration", "slot", "layout", "offer"] as const;
 
 export type BookingLayout = "month" | "week" | "column";
 export const BOOKING_LAYOUTS: readonly BookingLayout[] = ["month", "week", "column"];

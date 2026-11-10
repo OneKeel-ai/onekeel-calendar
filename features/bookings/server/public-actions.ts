@@ -20,6 +20,7 @@ import { answersSchema, type Answers } from "../responses";
 import { bookingRedirectUrl } from "../redirect";
 import { isUsablePrivateLink } from "@/features/event-types/server/private-links";
 import { cancelSeat, findSeat } from "./decisions";
+import { getOfferForEventType } from "@/features/offers/server/service";
 import { buildBookingEmails } from "./notifications";
 import { BookingFailure, cancelByAttendee, cancelSeriesByAttendee, createBooking, findBookingById, holdSlot } from "./service";
 import { resolveBookingTarget, type TargetKey } from "./targets";
@@ -49,6 +50,7 @@ const FAILURE_MESSAGES: Record<string, string> = {
   NOT_ALLOWED: "The host doesn't allow changing this booking online anymore. Please contact them directly.",
   CALENDAR_UNAVAILABLE: "Online booking is temporarily unavailable because the host's calendar can't be checked. Please contact them directly.",
   INVALID_RECURRENCE: "That number of occurrences isn't available for this event.",
+  OFFER_INVALID: "This scheduling link is no longer valid. Ask the sender for new times.",
 };
 
 const ZOOM_UNAVAILABLE = "Zoom isn't available for this booking right now. Please choose another location or contact the host directly.";
@@ -121,11 +123,21 @@ export async function createBookingAction(raw: CreateBookingPayload): Promise<Cr
   }
   // Guests get emails too: each address has its own "as guest" limit, so the form can't be used to
   // mail-bomb someone — and listing someone as a guest never uses up their own booking quota.
+  // A scheduling offer's attendees were set by a signed-in team member, so they have their own,
+  // roomier limit below instead of this one.
   for (const guest of new Set(input.guests.map((g) => g.toLowerCase()))) {
     if (await overLimit("bookAsGuest", guest)) return TOO_MANY;
   }
   const target = await resolve(input);
   if (!target) return { ok: false, message: "This booking page is not available." };
+  // A forwarded offer link must not become a way to flood the people it invites. A reschedule
+  // moves an existing meeting, and an offer that doesn't resolve is refused in createBooking.
+  if (input.offer && !input.reschedule) {
+    const offer = await getOfferForEventType(getDb(), input.offer, target.eventType.id);
+    for (const guest of offer?.guests ?? []) {
+      if (await overLimit("bookAsOfferGuest", guest)) return TOO_MANY;
+    }
+  }
   const teamHosts = target.target.hosts;
   const answers = validateAnswers(target.eventType.questions, input.responses);
   if (!answers.ok) return answers.result;
@@ -176,6 +188,7 @@ export async function createBookingAction(raw: CreateBookingPayload): Promise<Cr
       source: input.embed ? "embed" : "web",
       privateLinkToken: input.link,
       recurringCount: input.recurringCount,
+      offer: input.offer,
       // Side effects (calendar sync, meeting links, emails) are queued in the same transaction.
       onCommit: async (tx, result) => {
         const event = result.previous ? "rescheduled" : result.booking.status === "pending" ? "requested" : "created";

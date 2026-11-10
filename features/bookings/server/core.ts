@@ -30,7 +30,9 @@ export type BookingError =
   /** Accept/reject on a booking that is not pending (BKG-012). */
   | "NOT_PENDING"
   /** A required host's calendar is missing, disconnected or unreadable: no booking, no free slots. */
-  | "CALENDAR_UNAVAILABLE";
+  | "CALENDAR_UNAVAILABLE"
+  /** The link's scheduling offer is unknown, for another event type, or can't apply here. */
+  | "OFFER_INVALID";
 
 export class BookingFailure extends Error {
   constructor(

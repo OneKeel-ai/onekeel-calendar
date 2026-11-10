@@ -113,6 +113,13 @@
       "when": 1790853912919,
       "tag": "0015_assign_all_team_members",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794331133526,
+      "tag": "0016_scheduling_offer",
+      "breakpoints": true
     }
   ]
 }

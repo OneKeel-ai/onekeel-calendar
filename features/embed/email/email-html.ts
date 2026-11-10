@@ -5,7 +5,9 @@ import type { EmbedTarget } from "../target";
 /**
  * Email embed (Cal.com-style): the sender picks a few free slots and pastes a snapshot of them
  * into an email. Each slot is a link that opens the booking page on that start
- * (`?date=…&slot=…&duration=…`, see `BOOKING_LINK_PARAMS`). No tokens ever go into the email.
+ * (`?date=…&slot=…&duration=…`, see `BOOKING_LINK_PARAMS`). No secrets ever go into the email: an
+ * optional `offer=<id>` only names a server-side scheduling offer (title and attendees), which the
+ * booking reads from the database.
  *
  * The HTML is written for mail clients, not browsers: tables for layout, inline styles only,
  * no `<style>`, classes, scripts, images or web fonts, and explicit background + text colors on
@@ -30,6 +32,8 @@ export type EmailEmbedInput = {
   days: readonly EmailEmbedDay[];
   /** Replaces the event type label in the heading. */
   title?: string;
+  /** Scheduling offer id, added to every link so the booking gets its title and attendees. */
+  offer?: string;
   /** Short message above the times (plain text; line breaks are kept). */
   note?: string;
   /** Defaults to MAX_EMAIL_SLOTS. */
@@ -115,9 +119,18 @@ export function bookingPath(calLink: string): string {
     .join("/");
 }
 
-export function slotUrl(base: string, path: string, date: string, slot: string, duration: number): string {
+const OFFER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** `&offer=<id>`, or "" without one; an id that isn't one of ours is a programming error. */
+function offerQuery(offer: string | undefined): string {
+  if (offer === undefined || offer === "") return "";
+  if (!OFFER_ID.test(offer)) throw new EmailEmbedError("Invalid offer id");
+  return `&offer=${offer}`;
+}
+
+export function slotUrl(base: string, path: string, date: string, slot: string, duration: number, offer?: string): string {
   const query = [`date=${encodeURIComponent(date)}`, `slot=${encodeURIComponent(slot)}`, `duration=${encodeURIComponent(String(duration))}`];
-  return `${base}/${path}?${query.join("&")}`;
+  return `${base}/${path}?${query.join("&")}${offerQuery(offer)}`;
 }
 
 /** Valid days in date order, each with its valid, de-duplicated, sorted slots; the total is capped. */
@@ -171,16 +184,16 @@ function buildModel(input: EmailEmbedInput): Model {
   const firstInstant = days[0]?.slots[0]?.ms ?? 0;
   const note = input.note?.trim();
   return {
-    heading: input.title?.trim() || input.target.label,
+    heading: input.title?.replace(/\s+/g, " ").trim() || input.target.label,
     subtitle: formatDuration(input.duration, locale),
     timeZoneLine: strings.timeZone(timeZoneLabel(input.timeZone, firstInstant, locale)),
     note: note || null,
     strings,
-    allUrl: `${base}/${path}?duration=${encodeURIComponent(String(input.duration))}`,
+    allUrl: `${base}/${path}?duration=${encodeURIComponent(String(input.duration))}${offerQuery(input.offer)}`,
     days: days.map((day) => ({
       // Noon UTC of that calendar date, formatted in UTC: the weekday and date never shift.
       label: formatWeekdayDate(wallToUtc(parseDate(day.date), 12 * 60, "UTC"), { ...prefs, timeZone: "UTC" }),
-      slots: day.slots.map((slot) => ({ label: formatTime(slot.ms, prefs), url: slotUrl(base, path, day.date, slot.iso, input.duration) })),
+      slots: day.slots.map((slot) => ({ label: formatTime(slot.ms, prefs), url: slotUrl(base, path, day.date, slot.iso, input.duration, input.offer) })),
     })),
   };
 }

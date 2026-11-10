@@ -7,9 +7,12 @@ import { cn } from "@/lib/cn";
 import { type FormatPrefs, formatDateLong, formatDuration, formatTime } from "@/lib/format";
 import { Markdown } from "@/lib/markdown";
 import type { BookingFormConfig } from "./booking-form";
+import { alsoAttendingLine } from "./offer-link";
 
 type Props = {
   title: string;
+  /** People an Email times link invites (read-only). */
+  alsoAttending?: readonly string[];
   hostName: string;
   description: string | null;
   durations: number[];
@@ -28,6 +31,7 @@ type Props = {
 /** The event details column of the booking page (BKG-002). */
 export function BookingDetails(props: Props) {
   const { form, prefs, duration, ready } = props;
+  const attending = alsoAttendingLine(props.alsoAttending);
   return (
     <aside
       className={cn(
@@ -52,6 +56,11 @@ export function BookingDetails(props: Props) {
       {ready && form.recurring && (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <Repeat className="size-4" aria-hidden /> Can repeat {form.recurring.frequency === "weekly" ? "weekly" : "monthly"}, up to {form.recurring.maxCount} times
+        </p>
+      )}
+      {attending && (
+        <p className="flex items-start gap-2 text-sm break-all text-muted-foreground" data-testid="also-attending">
+          <Users className="mt-0.5 size-4 shrink-0" aria-hidden /> {attending}
         </p>
       )}
       {ready && props.seated && (

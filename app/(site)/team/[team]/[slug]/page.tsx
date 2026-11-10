@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { BookingPageView } from "@/features/bookings/components/booking-page";
+import { offerTitleFromQuery } from "@/features/offers/server/service";
 import { resolveBookingTarget } from "@/features/bookings/server/targets";
 
 async function load(params: PageProps<"/team/[team]/[slug]">["params"]) {
@@ -9,9 +10,11 @@ async function load(params: PageProps<"/team/[team]/[slug]">["params"]) {
   return resolveBookingTarget(getDb(), { team, slug });
 }
 
-export async function generateMetadata({ params }: PageProps<"/team/[team]/[slug]">): Promise<Metadata> {
+export async function generateMetadata({ params, searchParams }: PageProps<"/team/[team]/[slug]">): Promise<Metadata> {
   const target = await load(params);
-  return { title: target ? `${target.eventType.title} · ${target.displayName}` : "Not found", referrer: "no-referrer" };
+  // A title the sender wrote in Email times replaces the meeting type name the client would see.
+  const offerTitle = target ? await offerTitleFromQuery(getDb(), await searchParams, target.eventType.id) : null;
+  return { title: target ? `${offerTitle || target.eventType.title} · ${target.displayName}` : "Not found", referrer: "no-referrer" };
 }
 
 /** A team's collective or round-robin booking page (TEAM-001/004/005). */

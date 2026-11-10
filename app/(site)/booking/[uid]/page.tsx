@@ -16,6 +16,7 @@ import { mapLink } from "@/features/bookings/location";
 import { bookingPagePath } from "@/features/bookings/server/booking-path";
 import { attendeeMayCancel, remainingOccurrences } from "@/features/bookings/server/decisions";
 import { findBookingForManage } from "@/features/bookings/server/service";
+import { getOfferForEventType } from "@/features/offers/server/service";
 import { googleCalendarUrl, outlookCalendarUrl } from "@/lib/calendar-links";
 import { isCalendarRequired } from "@/lib/calendars/safety";
 import { requestTime } from "@/lib/clock";
@@ -61,7 +62,12 @@ export default async function BookingPage({ params, searchParams }: PageProps<"/
   const location = canManage ? b.locationValue : null;
   const icsUrl = `/api/bookings/${encodeURIComponent(uid)}/ics${tokenValue ? `?token=${encodeURIComponent(tokenValue)}` : ""}`;
   // Without the manage token nobody learns who booked: show the event type, not the booking title.
-  const title = canManage ? b.title : `${eventType.title} with ${host.name}`;
+  // A title the sender wrote in Email times names no one, so everyone sees it. An offer that only
+  // added people keeps the standard title, which includes the booker's name: still hidden here.
+  const offerTitle = b.offerId ? (await getOfferForEventType(getDb(), b.offerId, b.eventTypeId))?.title : null;
+  const title = canManage || offerTitle ? b.title : `${eventType.title} with ${host.name}`;
+  // Booking again or rescheduling keeps the link's meeting title and invited people.
+  const offerQuery = b.offerId ? `offer=${encodeURIComponent(b.offerId)}` : "";
   const calendarEvent = { title, start, end, details: (seat ? seat.notes : found.canManage ? b.notes : null) ?? undefined, location: location ?? undefined };
 
   return (
@@ -175,7 +181,7 @@ export default async function BookingPage({ params, searchParams }: PageProps<"/
           <div className="flex flex-wrap items-start gap-2">
             {selfReschedule && bookingPath && (
               <Button asChild>
-                <Link href={`${bookingPath}?reschedule=${encodeURIComponent(uid)}&token=${encodeURIComponent(tokenValue)}`}>Reschedule</Link>
+                <Link href={`${bookingPath}?reschedule=${encodeURIComponent(uid)}&token=${encodeURIComponent(tokenValue)}${offerQuery && `&${offerQuery}`}`}>Reschedule</Link>
               </Button>
             )}
             <CancelBookingForm uid={uid} token={tokenValue} label={seat ? "Cancel my seat" : pending ? "Withdraw request" : "Cancel booking"} series={series.length > 1} />
@@ -191,7 +197,7 @@ export default async function BookingPage({ params, searchParams }: PageProps<"/
           <Alert>
             <AlertDescription>
               Need a new time?{" "}
-              <Link className="font-medium" href={bookingPath}>
+              <Link className="font-medium" href={offerQuery ? `${bookingPath}?${offerQuery}` : bookingPath}>
                 Book again
               </Link>
             </AlertDescription>

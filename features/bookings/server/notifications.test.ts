@@ -26,6 +26,7 @@ const details = (patch: Partial<BookingDetails["booking"]> = {}): BookingDetails
     assignmentReason: null,
     manageTokenSealed: null,
     routingFormResponseId: null,
+    offerId: null,
     rescheduled: false,
     rescheduleRequestedAt: null,
     rescheduleRequestMessage: null,

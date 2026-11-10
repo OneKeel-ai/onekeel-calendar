@@ -17,6 +17,8 @@ export type BookingLinkParams = {
   /** Epoch milliseconds of the requested start. */
   slot?: number;
   layout?: BookingLayout;
+  /** Scheduling offer id (url-safe, at most 64 characters); passed on to the booking unchanged. */
+  offer?: string;
 };
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
@@ -65,18 +67,24 @@ export function parseSlotParam(value: unknown): number | undefined {
   return t;
 }
 
+export function parseOfferParam(value: unknown): string | undefined {
+  return typeof value === "string" && value.length <= 64 && /^[A-Za-z0-9_-]+$/.test(value) ? value : undefined;
+}
+
 export function parseBookingLinkParams(query: Query): BookingLinkParams {
   const date = parseDateParam(one(query.date));
   const month = parseMonthParam(one(query.month));
   const duration = parseDurationParam(one(query.duration));
   const slot = parseSlotParam(one(query.slot));
   const layout = parseLayout(one(query.layout));
+  const offer = parseOfferParam(one(query.offer));
   return {
     ...(date && { date }),
     ...(month && { month }),
     ...(duration && { duration }),
     ...(slot !== undefined && { slot }),
     ...(layout && { layout }),
+    ...(offer && { offer }),
   };
 }
 

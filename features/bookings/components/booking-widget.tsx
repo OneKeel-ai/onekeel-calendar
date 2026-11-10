@@ -32,11 +32,15 @@ import {
 import { BookingDetails } from "./booking-details";
 import { BookingForm, type BookingFormConfig } from "./booking-form";
 import { LayoutSwitcher, useNarrowScreen } from "./layout-switcher";
+import { OfferLinkInvalid } from "./offer-link";
 import { MonthCalendar } from "./month-calendar";
 import { WeekCalendar } from "./week-calendar";
 
 export type BookingWidgetProps = {
+  /** The event type's name, or the meeting title of an Email times link (`offer`). */
   title: string;
+  /** People the link's offer invites; shown read-only. */
+  alsoAttending?: readonly string[];
   hostName: string;
   description: string | null;
   durations: number[];
@@ -104,6 +108,8 @@ export function BookingWidget(props: BookingWidgetProps) {
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   /** A `slot=` start that is no longer free: shown as a notice on its day. */
   const [slotNotice, setSlotNotice] = useState<number | null>(null);
+  /** The booking was refused because the link's offer is gone: fail closed, like the page does. */
+  const [offerInvalid, setOfferInvalid] = useState(false);
   const pendingSlot = useRef<number | null>(null);
   const holdToken = useRef("");
   const requestSeq = useRef(0);
@@ -243,6 +249,7 @@ export function BookingWidget(props: BookingWidgetProps) {
   const details = (
     <BookingDetails
       title={props.title}
+      alsoAttending={props.alsoAttending}
       hostName={props.hostName}
       description={props.description}
       durations={props.durations}
@@ -282,6 +289,8 @@ export function BookingWidget(props: BookingWidgetProps) {
       </div>
     );
   }
+
+  if (offerInvalid) return <OfferLinkInvalid />;
 
   const today = localDateOf(nowMs, timeZone);
   const busy = loading || loadedKey !== requestKey;
@@ -331,6 +340,7 @@ export function BookingWidget(props: BookingWidgetProps) {
               prefs={prefs}
               tokens={() => ({ hold: holdToken.current, idempotencyKey: idempotencyKey.current })}
               onBack={() => setSelectedSlot(null)}
+              onOfferInvalid={() => setOfferInvalid(true)}
               onTaken={() => {
                 setSelectedSlot(null);
                 void load();

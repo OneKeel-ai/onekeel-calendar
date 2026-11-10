@@ -17,6 +17,7 @@ import { emitEmbed, isEmbedded } from "@/lib/embed/bridge";
 import { type FormatPrefs, formatDateLong, formatTime } from "@/lib/format";
 import type { Answer, Answers } from "../responses";
 import { createBookingAction } from "../server/public-actions";
+import { isInvalidOfferError } from "./offer-link";
 import { solveCaptcha } from "./captcha";
 import { QuestionField } from "./question-field";
 
@@ -40,6 +41,8 @@ export type BookingFormConfig = {
   embed: boolean;
   /** The instance requires an ALTCHA proof-of-work (ADM-007). */
   captcha: boolean;
+  /** Email times offer id from the link: sets the meeting title and invites its people. */
+  offer?: string;
 };
 
 type Props = {
@@ -51,12 +54,14 @@ type Props = {
   tokens: () => { hold: string; idempotencyKey: string };
   onBack: () => void;
   onTaken: () => void;
+  /** The server refused the link's offer (gone or for another meeting type). */
+  onOfferInvalid?: () => void;
 };
 
 const FREQUENCY_WORD = { weekly: "week", monthly: "month" } as const;
 
 /** The booker's details form: identity, guests, location, questions, series length (BKG-004). */
-export function BookingForm({ config, slot, duration, prefs, tokens, onBack, onTaken }: Props) {
+export function BookingForm({ config, slot, duration, prefs, tokens, onBack, onTaken, onOfferInvalid }: Props) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<{ message: string; fields?: Record<string, string> } | null>(null);
@@ -103,6 +108,7 @@ export function BookingForm({ config, slot, duration, prefs, tokens, onBack, onT
       utm: config.utm,
       embed: config.embed || undefined,
       link: config.link,
+      ...(config.offer && { offer: config.offer }),
       recurringCount: config.recurring && count > 1 ? count : undefined,
       captcha,
     });
@@ -131,8 +137,12 @@ export function BookingForm({ config, slot, duration, prefs, tokens, onBack, onT
       return;
     }
     setSubmitting(false);
-    setError({ message: result.message, fields: result.fieldErrors });
     emitEmbed("bookingFailed", { message: result.message });
+    if (config.offer && isInvalidOfferError(result)) {
+      onOfferInvalid?.();
+      return;
+    }
+    setError({ message: result.message, fields: result.fieldErrors });
     if (/taken/.test(result.message)) onTaken();
   };
 

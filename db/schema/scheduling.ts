@@ -312,6 +312,34 @@ export const eventTypeHost = pgTable(
   ],
 );
 
+// ---------------------------------------------------------------------------- scheduling offers
+
+/**
+ * A set of times an assistant emails on a host's behalf ("an offer"), with the meeting title and
+ * the attendees every booking made from it gets. The id is an unguessable public token carried
+ * in the emailed links (`?offer=`); everything else stays on the server, so the client can't
+ * change or drop it. Rows are never updated: identical content reuses one row (content hash).
+ */
+export const schedulingOffer = pgTable(
+  "scheduling_offer",
+  {
+    id: text("id").primaryKey(),
+    eventTypeId: text("event_type_id")
+      .notNull()
+      .references(() => eventType.id, { onDelete: "cascade" }),
+    /** Who saved it. Kept nullable so links already emailed survive the account's deletion. */
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    title: text("title"),
+    guests: jsonb("guests").$type<string[]>().notNull().default([]),
+    contentHash: text("content_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("scheduling_offer_content_idx").on(t.createdBy, t.eventTypeId, t.contentHash),
+    index("scheduling_offer_event_type_idx").on(t.eventTypeId),
+  ],
+);
+
 // ---------------------------------------------------------------------------- bookings
 
 export const bookingStatus = pgEnum("booking_status", ["accepted", "pending", "awaiting_payment", "cancelled", "rejected"]);
@@ -381,6 +409,8 @@ export const booking = pgTable(
     assignmentReason: text("assignment_reason"),
     /** RTE-004: the routing-form submission that led here. */
     routingFormResponseId: text("routing_form_response_id").references(() => routingFormResponse.id, { onDelete: "set null" }),
+    /** The scheduling offer whose link was booked: custom title and preset attendees. */
+    offerId: text("offer_id").references(() => schedulingOffer.id, { onDelete: "set null" }),
     ...timestamps,
   },
   (t) => [

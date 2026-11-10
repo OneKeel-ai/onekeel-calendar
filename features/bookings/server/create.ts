@@ -4,6 +4,7 @@ import { attendee, booking, bookingHost, eventTypeHost, membership, privateLink,
 import { isSlotAvailable, selectRoundRobinHost } from "@/lib/availability";
 import type { HostInput, SameTypeBooking } from "@/lib/availability/types";
 import { hashToken, newId, randomToken, tokenMatches } from "@/lib/ids";
+import { loadOffer, MAX_BOOKING_TITLE, mergeOfferGuests, type OfferView } from "@/features/offers/server/service";
 import { durationsOf, type EventTypeView, type PublicHost, toEngineEvent } from "@/features/event-types/server/service";
 import { type ScheduleView, scheduleForEventType, toScheduleInput } from "@/features/schedules/server/service";
 import { bookingTitle } from "../event-name";
@@ -69,6 +70,11 @@ export type CreateBookingInput = {
   privateLinkToken?: string;
   /** Recurring event types: how many occurrences to book (EVT-013). */
   recurringCount?: number;
+  /**
+   * Scheduling offer id from an emailed link: its title and attendees apply to the booking. Ignored
+   * on reschedule, which keeps the original booking's offer.
+   */
+  offer?: string;
   /** Runs inside the booking transaction, e.g. to enqueue side effects atomically. */
   onCommit?: (tx: Tx, created: CreatedBooking) => Promise<void>;
 };
@@ -123,6 +129,20 @@ async function consumeLink(tx: Tx, input: CreateBookingInput): Promise<string | 
     .for("update");
   if (!link) throw new BookingFailure("LINK_INVALID");
   return link.id;
+}
+
+/**
+ * The scheduling offer this booking is made from. A reschedule keeps the original booking's offer
+ * (read from the database, never from the client). An offer that doesn't resolve for this event
+ * type fails the booking: it is never made without the title and attendees the sender set.
+ */
+async function offerFor(tx: Tx, input: CreateBookingInput, previous: BookingRow | undefined): Promise<OfferView | null> {
+  const id = previous ? previous.offerId : input.offer;
+  if (!id) return null;
+  const offer = await loadOffer(tx, id, input.eventType.id);
+  // Seated events share one booking per slot between bookers: an offer can't be honoured there.
+  if (!offer || input.eventType.seatsPerSlot) throw new BookingFailure("OFFER_INVALID");
+  return offer;
 }
 
 type Occurrence = { start: number; end: number };
@@ -318,6 +338,7 @@ export async function createBooking(db: Database, input: CreateBookingInput): Pr
       await lockHosts(tx, loaded.map((h) => h.plan.host.id));
       const linkId = await consumeLink(tx, input);
       const previous = input.reschedule ? await loadReschedulable(tx, input) : undefined;
+      const offer = await offerFor(tx, input, previous);
       const assignment = await assign(tx, input, loaded, occurrences, previous?.uid);
 
       if (et.seatsPerSlot && !previous && !input.hosts) {
@@ -336,7 +357,7 @@ export async function createBooking(db: Database, input: CreateBookingInput): Pr
           .set({ status: "cancelled", manageTokenSealed: null, rescheduled: true, cancelledBy: "attendee", cancelledAt: new Date(input.now) })
           .where(eq(booking.id, previous.id));
       }
-      const result = await insertBookings(tx, input, occurrences, token, assignment, previous);
+      const result = await insertBookings(tx, input, occurrences, token, assignment, previous, offer);
       await markLinkUsed(tx, linkId, result.booking.id, input.now);
       if (input.holdToken) await tx.delete(slotReservation).where(eq(slotReservation.sessionTokenHash, hashToken(input.holdToken)));
       await input.onCommit?.(tx, result);
@@ -360,6 +381,7 @@ async function insertBookings(
   token: string,
   assignment: Assignment,
   previous?: BookingRow,
+  offer?: OfferView | null,
 ): Promise<CreatedBooking> {
   const { eventType: et } = input;
   const host = assignment.organizer;
@@ -367,9 +389,12 @@ async function insertBookings(
   const previousGuests = previous
     ? (await tx.select().from(attendee).where(eq(attendee.bookingId, previous.id))).filter((a) => a.isGuest).map((a) => a.email)
     : [];
-  const guests = [...new Set((input.guests.length ? input.guests : previousGuests).map((g) => g.toLowerCase()))].filter(
-    (g) => g !== input.booker.email.toLowerCase(),
-  );
+  // A scheduling offer's attendees come first and don't count against maxGuests (checked on the
+  // booker's own list in createBooking); nobody is invited twice, and hosts never as guests.
+  const hostEmails = offer
+    ? (await tx.select({ email: user.email }).from(user).where(inArray(user.id, assignment.hostIds))).map((h) => h.email)
+    : [];
+  const guests = mergeOfferGuests(offer?.guests ?? [], input.guests.length ? input.guests : previousGuests, [input.booker.email, ...hostEmails]);
   const seated = Boolean(et.seatsPerSlot);
   const status = needsConfirmation(et, occurrences[0].start, input.now) ? "pending" : "accepted";
   const seriesId = occurrences.length > 1 ? newId() : null;
@@ -379,7 +404,9 @@ async function insertBookings(
   const template = seated ? (et.eventNameTemplate?.includes("{attendee}") ? null : et.eventNameTemplate) ?? "{event} with {host}" : et.eventNameTemplate;
   // Collective bookings name the group (e.g. the team); round robin names the picked host.
   const hostLabel = assignment.hostIds.length > 1 && input.hostsLabel && !assignment.reason ? input.hostsLabel : host.name;
-  const title = bookingTitle(template, { event: et.title, host: hostLabel, attendee: input.booker.name, location: input.location?.value ?? null });
+  const title = offer?.title
+    ? offer.title.slice(0, MAX_BOOKING_TITLE)
+    : bookingTitle(template, { event: et.title, host: hostLabel, attendee: input.booker.name, location: input.location?.value ?? null });
 
   const rows: BookingRow[] = [];
   const allAttendees: AttendeeRow[] = [];
@@ -414,6 +441,7 @@ async function insertBookings(
         recurringSeriesId: seriesId,
         assignmentReason: assignment.reason,
         routingFormResponseId: input.routingFormResponseId ?? previous?.routingFormResponseId ?? null,
+        offerId: offer?.id ?? null,
       })
       .returning();
     const attendees = await tx

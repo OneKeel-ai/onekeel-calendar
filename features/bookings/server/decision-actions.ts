@@ -54,13 +54,14 @@ function onDecided(decision: "accept" | "reject", rebookUrl?: string) {
 async function rebookUrlFor(_hostUsername: string | null | undefined, bookingId: string): Promise<string | undefined> {
   const db = getDb();
   const [row] = await db
-    .select({ eventTypeId: booking.eventTypeId, organizerId: booking.organizerId, hidden: eventType.hidden })
+    .select({ eventTypeId: booking.eventTypeId, organizerId: booking.organizerId, hidden: eventType.hidden, offerId: booking.offerId })
     .from(booking)
     .innerJoin(eventType, eq(eventType.id, booking.eventTypeId))
     .where(eq(booking.id, bookingId));
   if (!row || row.hidden) return undefined;
   const path = await bookingPagePath(db, row.eventTypeId, row.organizerId);
-  return path ? `${getEnv().APP_URL}${path}` : undefined;
+  // Booking again keeps the meeting title and invited people the original link carried.
+  return path ? `${getEnv().APP_URL}${path}${row.offerId ? `?offer=${encodeURIComponent(row.offerId)}` : ""}` : undefined;
 }
 
 async function applyDecision(input: { bookingId: string; hostId: string; hostUsername?: string | null; decision: "accept" | "reject"; reason?: string }) {

@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import type { Database, Tx } from "@/db/client";
-import { attendee, booking, bookingHost, bookingReference, eventType, eventTypeQuestion, slotReservation, team, user } from "@/db/schema";
+import { attendee, booking, bookingHost, bookingReference, eventType, eventTypeQuestion, schedulingOffer, slotReservation, team, user } from "@/db/schema";
 import { computeSlots, computeTeamSlots, isSlotAvailable, type TeamHostInput, type TeamSlot } from "@/lib/availability";
 import type { HostInput, Interval, Slot } from "@/lib/availability/types";
 import { hashToken, newId, tokenMatches } from "@/lib/ids";
@@ -425,10 +425,18 @@ function filterWhere(hostId: string, filter: Omit<HostBookingFilter, "tab">) {
 
 export async function listHostBookings(db: Database, hostId: string, filter: HostBookingFilter) {
   const rows = await db
-    .select({ booking, eventTitle: eventType.title, teamName: team.name, disableRescheduling: eventType.disableRescheduling, seatsPerSlot: eventType.seatsPerSlot })
+    .select({
+      booking,
+      eventTitle: eventType.title,
+      teamName: team.name,
+      disableRescheduling: eventType.disableRescheduling,
+      seatsPerSlot: eventType.seatsPerSlot,
+      offerTitle: schedulingOffer.title,
+    })
     .from(booking)
     .innerJoin(eventType, eq(eventType.id, booking.eventTypeId))
     .leftJoin(team, eq(team.id, eventType.teamId))
+    .leftJoin(schedulingOffer, eq(schedulingOffer.id, booking.offerId))
     .where(and(filterWhere(hostId, filter), tabWhere(filter.tab, new Date(filter.now))))
     .orderBy(filter.tab === "upcoming" || filter.tab === "unconfirmed" ? asc(booking.startAt) : desc(booking.startAt))
     .limit(200);
@@ -448,6 +456,8 @@ export async function listHostBookings(db: Database, hostId: string, filter: Hos
   return rows.map((r) => ({
     ...r.booking,
     eventTitle: r.eventTitle,
+    /** The meeting title a scheduling offer set (shown instead of the event type's), else null. */
+    customTitle: r.booking.offerId && r.offerTitle ? r.booking.title : null,
     /** Team event types: the team, shown as a badge (null for personal event types). */
     teamName: r.teamName,
     /** The invitee could move it with an emailed link (BKG-010 "Request reschedule"). */

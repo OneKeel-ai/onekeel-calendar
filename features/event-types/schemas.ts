@@ -71,7 +71,7 @@ export const QUESTION_LABELS: Record<QuestionType, string> = {
 };
 export const QUESTION_HAS_OPTIONS = new Set<QuestionType>(["select", "multi_select", "radio", "checkbox"]);
 /** Keys the booking form already uses; custom questions can't take them (BKG-014 prefill). */
-export const RESERVED_KEYS = new Set(["name", "email", "notes", "guests", "phone", "duration", "date", "month", "slot", "embed", "reschedule", "token", "link"]);
+export const RESERVED_KEYS = new Set(["name", "email", "notes", "guests", "phone", "duration", "date", "month", "slot", "embed", "reschedule", "token", "link", "offer"]);
 
 export const questionSchema = z
   .object({

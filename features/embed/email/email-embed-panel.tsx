@@ -17,8 +17,11 @@ import { EmailCopyActions } from "./email-copy-actions";
 import { EmailEmbedError, emailPreviewDocument, MAX_EMAIL_SLOTS, renderEmailEmbed } from "./email-html";
 import { CalendarOverlay } from "./calendar-overlay";
 import { EmailSlotPicker } from "./email-slot-picker";
+import { type CopyGate, copyGate, type MeetingDetailsValue } from "./meeting-details";
+import { MeetingDetails, OfferSaveStatus } from "./meeting-details-fields";
 import { busyDuring, type LoadBusy, type ScopedSelection, selectionIn, shownPeople, toggleViewed, weekWindow } from "./planner";
 import { dayKey, groupByDay, toggleSlot } from "./selection";
+import { useOfferSave } from "./use-offer-save";
 import { useViewedCalendars } from "./use-viewed-calendars";
 import { useWeekSlots } from "./use-week-slots";
 
@@ -33,6 +36,17 @@ export type EmailPlannerOptions = {
   hostLabel: string;
   /** Reads viewed calendars for a window; must be stable between renders. */
   loadBusy?: LoadBusy;
+};
+
+/**
+ * Optional "Meeting details" (used by Email times): a custom title and people invited when the
+ * client books. The values live with the caller so they survive a change of host or meeting type.
+ */
+export type EmailOfferOptions = {
+  /** Event type the times are offered for; the details are saved for it. */
+  eventTypeId: string;
+  value: MeetingDetailsValue;
+  onChange: (next: MeetingDetailsValue) => void;
 };
 
 type Env = { appUrl: string; timeZone: string; locale: string; hour12: boolean; now: number };
@@ -59,11 +73,14 @@ export function EmailEmbedPanel({
   target,
   appUrl,
   planner,
+  offer,
 }: {
   target: EmbedTarget;
   /** The instance's canonical URL (APP_URL); links must not depend on how the dashboard was reached. */ appUrl?: string;
   /** Adds the optional calendar view. Without it the panel behaves exactly as in the embed dialog. */
   planner?: EmailPlannerOptions;
+  /** Adds the meeting title and invitees. Without it links carry no offer, as in the embed dialog. */
+  offer?: EmailOfferOptions;
 }) {
   if (!target.booking || target.booking.durations.length === 0) {
     return (
@@ -73,7 +90,7 @@ export function EmailEmbedPanel({
       </p>
     );
   }
-  return <EmailEmbedEditor target={target} booking={target.booking} appUrl={appUrl} planner={planner} />;
+  return <EmailEmbedEditor target={target} booking={target.booking} appUrl={appUrl} planner={planner} offer={offer} />;
 }
 
 type Booking = NonNullable<EmbedTarget["booking"]>;
@@ -83,11 +100,13 @@ function EmailEmbedEditor({
   booking,
   appUrl,
   planner,
+  offer,
 }: {
   target: EmbedTarget;
   booking: Booking;
   appUrl?: string;
   planner?: EmailPlannerOptions;
+  offer?: EmailOfferOptions;
 }) {
   const [env, setEnv] = useState<Env | null>(null);
   const [timeZone, setTimeZone] = useState<string | null>(null);
@@ -109,6 +128,12 @@ function EmailEmbedEditor({
   const [viewed, setViewed] = useState<readonly string[]>([]);
   const [note, setNote] = useState("");
   const timeZones = useTimeZones();
+  const details = offer?.value;
+  const offerSave = useOfferSave(offer?.eventTypeId ?? "", details ?? { title: "", guests: [] });
+  // Links must carry exactly the title and people on screen: no copying until those are saved.
+  const gate: CopyGate = offer && details ? copyGate(offer.eventTypeId, details, offerSave.save) : { canCopy: true };
+  const offerId = gate.canCopy ? gate.offerId : undefined;
+  const customTitle = details?.title.trim() || undefined;
 
   useEffect(() => {
     const next = readEnv(appUrl);
@@ -172,12 +197,14 @@ function EmailEmbedEditor({
         days: groupByDay(selected, timeZone),
         note,
         maxSlots: MAX_EMAIL_SLOTS,
+        title: customTitle,
+        offer: offerId,
       });
     } catch (error) {
       if (error instanceof EmailEmbedError) return { error: error.message };
       throw error;
     }
-  }, [env, target, duration, timeZone, hour12, selected, note]);
+  }, [env, target, duration, timeZone, hour12, selected, note, customTitle, offerId]);
 
   const busyNames = useCallback((slot: string) => busyDuring(slot, duration, viewedPeople), [duration, viewedPeople]);
 
@@ -325,9 +352,10 @@ function EmailEmbedEditor({
             className="h-96 w-full rounded-md border border-border bg-white"
           />
         )}
-        <EmailCopyActions html={html} text={text} disabled={!html || selected.length === 0} />
+        {offer && <OfferSaveStatus gate={gate} onRetry={offerSave.retry} />}
+        <EmailCopyActions html={html} text={text} disabled={!html || selected.length === 0 || !gate.canCopy} />
         {/* Manual fallback when the browser refuses clipboard access (and a way to inspect the source). */}
-        {html && selected.length > 0 && (
+        {html && selected.length > 0 && gate.canCopy && (
           <details className="rounded-md border border-border text-sm">
             <summary className="cursor-pointer px-3 py-2 font-medium">Show HTML</summary>
             <Textarea
@@ -343,10 +371,21 @@ function EmailEmbedEditor({
     </div>
   );
 
-  if (!planner) return editor;
+  // Filled before picking times, so it sits above the time planner.
+  const meetingDetails = offer && details && (
+    <MeetingDetails
+      eventTypeId={offer.eventTypeId}
+      value={details}
+      onChange={offer.onChange}
+      fieldErrors={!gate.canCopy && gate.status === "error" && offerSave.save.status === "error" ? offerSave.save.fieldErrors : undefined}
+    />
+  );
+
+  if (!planner && !meetingDetails) return editor;
   return (
     <div className="flex flex-col gap-6">
-      {planner.loadBusy && (
+      {meetingDetails}
+      {planner?.loadBusy && (
         <CalendarOverlay
           open={plannerOpen}
           onOpen={setPlannerOpen}

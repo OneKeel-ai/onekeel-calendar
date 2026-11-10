@@ -119,6 +119,29 @@ describe("renderEmailEmbed", () => {
     expect(text).toContain("Saatler Europe/Istanbul");
   });
 
+  it("adds the offer id to every slot link and to the see-all link", () => {
+    const offer = "Zq9_offer-ID_0123456789abcdefABCD";
+    const { html, text } = renderEmailEmbed({ ...base, offer });
+    const links = hrefs(html);
+    expect(links).toHaveLength(3);
+    for (const href of links) expect(new URL(href).searchParams.get("offer")).toBe(offer);
+    expect(links.at(-1)).toBe(`https://cal.example.com/ada/intro?duration=30&offer=${offer}`);
+    expect(text).toContain(`&duration=30&offer=${offer}`);
+    expect(text).toContain(`See all available times: https://cal.example.com/ada/intro?duration=30&offer=${offer}`);
+  });
+
+  it("rejects an offer id that isn't url-safe instead of putting it in a link", () => {
+    expect(() => renderEmailEmbed({ ...base, offer: "x&title=evil" })).toThrow(EmailEmbedError);
+    expect(renderEmailEmbed({ ...base, offer: "" }).html).not.toContain("offer=");
+  });
+
+  it("shows the custom title as the heading in both the HTML and the text", () => {
+    const { html, text } = renderEmailEmbed({ ...base, title: "  Quarterly   review with Acme " });
+    expect(html).toContain(">Quarterly review with Acme</p>");
+    expect(html).not.toContain("Intro call");
+    expect(text.split("\n")[0]).toBe("Quarterly review with Acme (30 min)");
+  });
+
   it("falls back to English for an invalid locale", () => {
     expect(renderEmailEmbed({ ...base, locale: "not a locale!!" }).html).toContain("See all available times");
   });

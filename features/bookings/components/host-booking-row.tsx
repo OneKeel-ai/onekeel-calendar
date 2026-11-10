@@ -71,6 +71,8 @@ export function HostBookingRow({
   const status = statusLine(b);
   const source = sourceLabel(b.source, b.utm);
   const answers = Object.entries(b.responses);
+  // A title set in Email times leads; the invitee and the meeting type stay visible below it.
+  const customTitle = b.customTitle?.trim() || null;
 
   return (
     <Collapsible asChild defaultOpen={defaultOpen}>
@@ -92,11 +94,18 @@ export function HostBookingRow({
           </span>
           <div className="flex min-w-0 flex-col gap-[3px]">
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-              <h3 className="text-sm font-semibold">
-                <span className="sr-only">{b.eventTitle} with </span>
-                {name}
-              </h3>
-              {primary && <span className="min-w-0 truncate text-[13px] text-muted-foreground">{primary.email}</span>}
+              {customTitle ? (
+                <h3 className="text-sm font-semibold">
+                  {customTitle}
+                  <span className="sr-only"> with {name}</span>
+                </h3>
+              ) : (
+                <h3 className="text-sm font-semibold">
+                  <span className="sr-only">{b.eventTitle} with </span>
+                  {name}
+                </h3>
+              )}
+              {primary && !customTitle && <span className="min-w-0 truncate text-[13px] text-muted-foreground">{primary.email}</span>}
               {isNext && (
                 <Badge variant="highlight" className={pill}>
                   {relativeStart(startAt, now)}
@@ -129,6 +138,12 @@ export function HostBookingRow({
                 </Badge>
               )}
             </div>
+            {customTitle && (
+              <span className="min-w-0 truncate text-[13px] text-muted-foreground" data-testid="booking-invitee">
+                {name}
+                {primary && ` (${primary.email})`}
+              </span>
+            )}
             <span className="text-[13px] text-muted-foreground">
               {b.eventTitle} · {location.label} · {minutes} min
             </span>
@@ -139,7 +154,7 @@ export function HostBookingRow({
         <div className="flex items-center gap-2 md:justify-end md:self-start">
           {decidable && (
             <div className="flex-1 md:flex-none">
-              <QuickDecision bookingId={b.id} label={`${b.eventTitle} with ${name}`} />
+              <QuickDecision bookingId={b.id} label={`${customTitle ?? b.eventTitle} with ${name}`} />
             </div>
           )}
           {joinUrl && (

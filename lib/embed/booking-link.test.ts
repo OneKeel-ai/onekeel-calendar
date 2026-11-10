@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseBookingLinkParams, parseDateParam, parseDurationParam, parseLayout, parseMonthParam, parseSlotParam, withLayoutParam } from "./booking-link";
+import { parseBookingLinkParams, parseDateParam, parseDurationParam, parseLayout, parseMonthParam, parseOfferParam, parseSlotParam, withLayoutParam } from "./booking-link";
 
 describe("parseSlotParam", () => {
   it("accepts ISO 8601 UTC instants", () => {
@@ -60,6 +60,15 @@ describe("other link params", () => {
       layout: "week",
     });
     expect(parseBookingLinkParams({ date: "x", month: "m", duration: "y", slot: "z", layout: "w", name: "Eve" })).toEqual({});
+  });
+
+  it("keeps a url-safe offer id of up to 64 characters and drops anything else", () => {
+    const id = "Ab3_-xYz".repeat(4);
+    expect(parseOfferParam(id)).toBe(id);
+    expect(parseOfferParam("a".repeat(64))).toBe("a".repeat(64));
+    for (const bad of [undefined, "", "a".repeat(65), "abc def", "abc/../x", "abc%20", "abc&title=x", "ünï"]) expect(parseOfferParam(bad)).toBeUndefined();
+    expect(parseBookingLinkParams({ slot: "2026-10-01T09:30:00Z", offer: [id, "other"] })).toEqual({ slot: Date.UTC(2026, 9, 1, 9, 30), offer: id });
+    expect(parseBookingLinkParams({ offer: "bad id" })).toEqual({});
   });
 });
 
