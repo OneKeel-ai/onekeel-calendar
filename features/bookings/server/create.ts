@@ -1,10 +1,10 @@
 import { and, count, eq, gt, gte, inArray, isNull, or } from "drizzle-orm";
 import type { Database, Tx } from "@/db/client";
 import { attendee, booking, bookingHost, eventTypeHost, membership, privateLink, slotReservation, user } from "@/db/schema";
-import { isSlotAvailable, selectRoundRobinHost } from "@/lib/availability";
+import { isManualSlotAvailable, isSlotAvailable, selectRoundRobinHost } from "@/lib/availability";
 import type { HostInput, SameTypeBooking } from "@/lib/availability/types";
 import { hashToken, newId, randomToken, tokenMatches } from "@/lib/ids";
-import { loadOffer, MAX_BOOKING_TITLE, mergeOfferGuests, type OfferView } from "@/features/offers/server/service";
+import { findManualSlot, loadOffer, MAX_BOOKING_TITLE, mergeOfferGuests, type OfferView } from "@/features/offers/server/service";
 import { durationsOf, type EventTypeView, type PublicHost, toEngineEvent } from "@/features/event-types/server/service";
 import { type ScheduleView, scheduleForEventType, toScheduleInput } from "@/features/schedules/server/service";
 import { bookingTitle } from "../event-name";
@@ -75,6 +75,12 @@ export type CreateBookingInput = {
    * on reschedule, which keeps the original booking's offer.
    */
   offer?: string;
+  /**
+   * Bookings on a time added by hand to the offer don't read the host's calendars. For hosts who
+   * must have a working calendar this still checks the booking can be written to it (the same
+   * write-side checks the busy read makes), so it isn't accepted with nowhere to go.
+   */
+  calendarWritable?: (hostId: string) => Promise<void>;
   /** Runs inside the booking transaction, e.g. to enqueue side effects atomically. */
   onCommit?: (tx: Tx, created: CreatedBooking) => Promise<void>;
 };
@@ -145,6 +151,24 @@ async function offerFor(tx: Tx, input: CreateBookingInput, previous: BookingRow 
   return offer;
 }
 
+/**
+ * Is this booking on a time added by hand to its offer (the link's offer, or on reschedule the
+ * moved booking's)? Read before any lock to decide whether the host's calendars are read at
+ * all; confirmed again under the locks from the offer the booking really uses. Only for one
+ * occurrence with one host and no seats.
+ */
+async function manualSlotRequested(db: Database, input: CreateBookingInput): Promise<boolean> {
+  if ((input.recurringCount ?? 1) !== 1 || input.eventType.seatsPerSlot || (input.hosts && input.hosts.length !== 1)) return false;
+  const id = input.reschedule
+    ? (await db.select({ offerId: booking.offerId }).from(booking).where(eq(booking.uid, input.reschedule.uid)))[0]?.offerId
+    : input.offer;
+  if (!id) return false;
+  return Boolean(findManualSlot(await loadOffer(db, id, input.eventType.id), input.start, input.durationMin, soleHostId(input)));
+}
+
+/** The one host of a booking that may use a time added by hand (callers have checked there is exactly one). */
+const soleHostId = (input: CreateBookingInput) => (input.hosts ? input.hosts[0]!.host.id : input.host.id);
+
 type Occurrence = { start: number; end: number };
 
 function planOccurrences(input: CreateBookingInput, timeZone: string): Occurrence[] {
@@ -204,8 +228,14 @@ function checkOccurrences(
   occurrences: Occurrence[],
   rescheduleUid: string | undefined,
   external: HostInput["externalBusy"][],
+  manual = false,
 ): string | null {
   const engineEvent = toEngineEvent(input.eventType, input.durationMin);
+  if (manual) {
+    // A time added by hand to the offer (one occurrence): see isManualSlotAvailable for what it skips.
+    const check = isManualSlotAvailable(engineEvent, base, occurrences[0], { now: input.now, rescheduleUid });
+    return check.ok ? null : check.reason;
+  }
   let host = base;
   for (const [i, o] of occurrences.entries()) {
     const check = isSlotAvailable(engineEvent, { ...host, externalBusy: external[i] ?? host.externalBusy }, o, { now: input.now, rescheduleUid });
@@ -227,7 +257,7 @@ type Assignment = { organizer: PublicHost; hostIds: string[]; reason: string | n
 type LoadedHost = { plan: HostPlan; schedule: ScheduleView; external: HostInput["externalBusy"][] };
 
 /** Schedules and external calendars per host, read before taking any lock (no I/O under it). */
-async function loadPlans(db: Database, input: CreateBookingInput, plans: HostPlan[], occurrences: (tz: string) => Occurrence[]) {
+async function loadPlans(db: Database, input: CreateBookingInput, plans: HostPlan[], occurrences: (tz: string) => Occurrence[], manual: boolean) {
   const schedules = await Promise.all(plans.map((p) => scheduleForEventType(db, p.host.id, p.scheduleId)));
   if (plans.some((p, i) => p.fixed && !schedules[i])) throw new BookingFailure("NO_SCHEDULE");
   const usable = plans.flatMap((plan, i) => (schedules[i] ? [{ plan, schedule: schedules[i] }] : []));
@@ -235,6 +265,11 @@ async function loadPlans(db: Database, input: CreateBookingInput, plans: HostPla
   const planned = occurrences(usable[0].schedule.timeZone);
   const loaded: LoadedHost[] = await Promise.all(
     usable.map(async (u) => {
+      // A time added by hand doesn't need the calendar read, only (for required hosts) writable.
+      if (manual) {
+        await input.calendarWritable?.(u.plan.host.id);
+        return { ...u, external: [] };
+      }
       const fn = input.hosts ? input.externalBusyFor?.(u.plan.host.id) : input.externalBusy;
       return { ...u, external: fn ? await Promise.all(planned.map((o) => fn(validationWindow(o.start)))) : [] };
     }),
@@ -246,7 +281,14 @@ async function loadPlans(db: Database, input: CreateBookingInput, plans: HostPla
  * Re-validates every host under the locks and assigns the booking (TEAM-004…007): every fixed
  * host must be free; with a pool, the round-robin selector picks one free pool host.
  */
-async function assign(tx: Tx, input: CreateBookingInput, hosts: LoadedHost[], occurrences: Occurrence[], rescheduleUid: string | undefined): Promise<Assignment> {
+async function assign(
+  tx: Tx,
+  input: CreateBookingInput,
+  hosts: LoadedHost[],
+  occurrences: Occurrence[],
+  rescheduleUid: string | undefined,
+  manual = false,
+): Promise<Assignment> {
   const et = input.eventType;
   const engineEvent = toEngineEvent(et, input.durationMin);
   const span = { start: occurrences[0].start, end: occurrences.at(-1)!.end };
@@ -270,7 +312,7 @@ async function assign(tx: Tx, input: CreateBookingInput, hosts: LoadedHost[], oc
       ownHoldHash: input.holdToken ? hashToken(input.holdToken) : undefined,
       eventType: { id: et.id, limits: engineEvent.limits, seats: engineEvent.seats },
     });
-    const why = checkOccurrences(input, loaded, occurrences, rescheduleUid, h.external);
+    const why = checkOccurrences(input, loaded, occurrences, rescheduleUid, h.external, manual);
     if (why === null) free.add(h.plan.host.id);
     else failure ??= why;
   }
@@ -330,7 +372,8 @@ export async function createBooking(db: Database, input: CreateBookingInput): Pr
   }
   assertPlausibleStart(input.start, input.now);
   const plans = input.hosts ?? [{ host: input.host, fixed: true, weight: 100, priority: 2, scheduleId: et.scheduleId }];
-  const { loaded, occurrences } = await loadPlans(db, input, plans, (tz) => planOccurrences(input, tz));
+  const manualRequested = await manualSlotRequested(db, input);
+  const { loaded, occurrences } = await loadPlans(db, input, plans, (tz) => planOccurrences(input, tz), manualRequested);
   const token = randomToken();
 
   try {
@@ -339,7 +382,9 @@ export async function createBooking(db: Database, input: CreateBookingInput): Pr
       const linkId = await consumeLink(tx, input);
       const previous = input.reschedule ? await loadReschedulable(tx, input) : undefined;
       const offer = await offerFor(tx, input, previous);
-      const assignment = await assign(tx, input, loaded, occurrences, previous?.uid);
+      // The calendars were skipped only for a time added by hand: the offer actually used must have it.
+      if (manualRequested && !findManualSlot(offer, input.start, input.durationMin, soleHostId(input))) throw new BookingFailure("SLOT_UNAVAILABLE", "not_offered");
+      const assignment = await assign(tx, input, loaded, occurrences, previous?.uid, manualRequested);
 
       if (et.seatsPerSlot && !previous && !input.hosts) {
         const joined = await joinSeat(tx, input, occurrences[0], token);

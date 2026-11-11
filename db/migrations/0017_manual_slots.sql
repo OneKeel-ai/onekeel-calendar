@@ -1,0 +1,1 @@
+ALTER TABLE "scheduling_offer" ADD COLUMN "manual_slots" jsonb DEFAULT '[]'::jsonb NOT NULL;

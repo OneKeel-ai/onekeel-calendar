@@ -17,7 +17,7 @@ async function calendarProps(userId: string) {
   const connections = await listConnections(getDb(), userId);
   return {
     calendars: connections.flatMap((c) =>
-      c.calendars.map((cal) => ({ id: cal.id, name: cal.name, account: c.label, readOnly: cal.readOnly })),
+      c.calendars.map((cal) => ({ id: cal.id, name: cal.name, account: c.label, readOnly: cal.readOnly, primary: cal.isPrimary })),
     ),
     connectedProviders: connections.filter((c) => !c.invalid).map((c) => c.provider),
   };

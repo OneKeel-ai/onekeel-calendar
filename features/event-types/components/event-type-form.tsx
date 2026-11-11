@@ -23,10 +23,12 @@ import {
   slugify,
 } from "../schemas";
 import { AdvancedSettings } from "./advanced-settings";
+import { CONFLICT_HELP_TEXT, OWN_CALENDAR_WARNING, ownCalendarUnchecked } from "./conflict-calendars";
 import { QuestionsEditor } from "./questions-editor";
 import { submitWithoutReset } from "@/lib/submit-without-reset";
 
-export type CalendarOption = { id: string; name: string; account: string; readOnly: boolean };
+/** `primary`: the account's main calendar, when the page knows it (used only for a warning). */
+export type CalendarOption = { id: string; name: string; account: string; readOnly: boolean; primary?: boolean };
 export type CalendarSettings = { conflictCalendarIds: string[]; destinationCalendarId: string | null };
 
 /** Which connected account a location kind needs, if any (INT-008/009). */
@@ -427,10 +429,18 @@ export function EventTypeFormView(props: {
       {props.calendars.length > 0 && (
         <section className="flex flex-col gap-3">
           <h2 className="font-medium">Calendars</h2>
-          <FieldSet className="gap-2">
+          <FieldSet className="gap-2" aria-describedby="conflict-calendars-help">
             <FieldLegend variant="label" className="font-normal">
               Check these calendars for conflicts (none selected = your account defaults)
             </FieldLegend>
+            <p id="conflict-calendars-help" className="text-sm text-muted-foreground">
+              {CONFLICT_HELP_TEXT}
+            </p>
+            {ownCalendarUnchecked(props.calendars, calendarSettings.conflictCalendarIds) && (
+              <p role="status" className="rounded-md border border-warning-border bg-warning px-3 py-2 text-sm text-warning-foreground">
+                {OWN_CALENDAR_WARNING}
+              </p>
+            )}
             {props.calendars.map((cal) => (
               <Field key={cal.id} orientation="horizontal">
                 <Checkbox

@@ -131,7 +131,7 @@ export type ConnectionView = {
   label: string;
   invalid: boolean;
   lastError: string | null;
-  calendars: { id: string; name: string; color: string | null; readOnly: boolean; checkConflicts: boolean; isDestination: boolean }[];
+  calendars: { id: string; name: string; color: string | null; readOnly: boolean; isPrimary: boolean; checkConflicts: boolean; isDestination: boolean }[];
 };
 
 export async function listConnections(db: Database, userId: string): Promise<ConnectionView[]> {
@@ -154,6 +154,7 @@ export async function listConnections(db: Database, userId: string): Promise<Con
         name: cal.name,
         color: cal.color,
         readOnly: cal.readOnly,
+        isPrimary: cal.isPrimary,
         checkConflicts: cal.checkConflicts,
         isDestination: destination?.connectedCalendarId === cal.id,
       })),

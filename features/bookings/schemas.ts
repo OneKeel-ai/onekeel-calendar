@@ -13,6 +13,9 @@ export const eventRefSchema = z.object({
   slug: z.string().min(1).max(64),
 });
 
+/** Scheduling offer id from an emailed link (`?offer=`): url-safe, at most 64 characters. */
+export const offerIdSchema = z.string().max(64).regex(/^[A-Za-z0-9_-]+$/);
+
 export const rescheduleRefSchema = z.object({ uid: z.string().min(1).max(64), token: z.string().min(1).max(128) });
 
 export const slotsQuerySchema = eventRefSchema
@@ -25,6 +28,8 @@ export const slotsQuerySchema = eventRefSchema
     hold: z.string().max(128).optional(),
     /** Single-use link token, for link-only event types (EVT-015). */
     link: z.string().max(128).optional(),
+    /** Scheduling offer id: its times added by hand are listed too. Ignored on reschedule (the booking's own offer counts). */
+    offer: offerIdSchema.optional(),
   })
   .refine((q) => q.end > q.start && q.end - q.start <= 45 * DAY, { message: "Window must be at most 45 days" });
 
@@ -33,6 +38,8 @@ export const holdSchema = eventRefSchema.extend({
   duration: z.number().int().positive(),
   holdToken: z.string().min(16).max(128),
   link: z.string().max(128).optional(),
+  /** Scheduling offer id: a time added by hand to it can be held. */
+  offer: offerIdSchema.optional(),
 });
 
 export const bookerSchema = z.object({
@@ -85,7 +92,7 @@ export const createBookingSchema = eventRefSchema.extend({
   /** The routing-form response that led here (RTE-004). */
   routing: z.string().max(64).optional(),
   /** Scheduling offer id from an emailed link: custom title and preset attendees, held server-side. */
-  offer: z.string().max(64).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  offer: offerIdSchema.optional(),
 });
 
 export type CreateBookingPayload = z.input<typeof createBookingSchema>;

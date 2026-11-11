@@ -16,16 +16,19 @@ import type { EmbedTarget } from "../target";
 import { EmailCopyActions } from "./email-copy-actions";
 import { EmailEmbedError, emailPreviewDocument, MAX_EMAIL_SLOTS, renderEmailEmbed } from "./email-html";
 import { CalendarOverlay } from "./calendar-overlay";
+import { MANUAL_HOURS, manualChoices, manualPicks, manualSlotsInput, NO_PICKS, type PickState, slotGrid, togglePick } from "./manual-times";
+import { ManualTimesNotice, ManualTimesSwitch } from "./manual-times-fields";
 import { EmailSlotPicker } from "./email-slot-picker";
 import { type CopyGate, copyGate, type MeetingDetailsValue } from "./meeting-details";
 import { MeetingDetails, OfferSaveStatus } from "./meeting-details-fields";
-import { busyDuring, type LoadBusy, type ScopedSelection, selectionIn, shownPeople, toggleViewed, weekWindow } from "./planner";
-import { dayKey, groupByDay, toggleSlot } from "./selection";
+import { busyDuring, displayHours, type LoadBusy, shownPeople, toggleViewed, weekWindow } from "./planner";
+import { dayKey, groupByDay } from "./selection";
 import { useOfferSave } from "./use-offer-save";
 import { useViewedCalendars } from "./use-viewed-calendars";
 import { useWeekSlots } from "./use-week-slots";
 
 const NOTE_MAX = 500;
+const EMPTY_SLOTS: readonly string[] = [];
 
 /**
  * Optional planning view (used by Email times): lets the sender view teammates' busy time next to
@@ -47,6 +50,11 @@ export type EmailOfferOptions = {
   eventTypeId: string;
   value: MeetingDetailsValue;
   onChange: (next: MeetingDetailsValue) => void;
+  /**
+   * Offer "Add times by hand": times the calendar shows as busy or outside working hours, saved
+   * in the offer so its links can book them. Only for single-host, non-seated meeting types.
+   */
+  manualTimes?: boolean;
 };
 
 type Env = { appUrl: string; timeZone: string; locale: string; hour12: boolean; now: number };
@@ -115,23 +123,30 @@ function EmailEmbedEditor({
   const [weekStart, setWeekStart] = useState<LocalDate | null>(null);
   const [activeDay, setActiveDay] = useState<string | null>(null);
   // Picks are tied to this booking page: if the target ever changes in place, old picks are dropped
-  // instead of being offered on another host's calendar.
+  // instead of being offered on another host's calendar. Hand-added picks go with them.
   const scope = target.calLink;
-  const [picked, setPicked] = useState<ScopedSelection>({ scope, slots: [] });
-  const selected = selectionIn(picked, scope);
-  const setSelected = useCallback(
-    (next: readonly string[] | ((prev: readonly string[]) => readonly string[])) =>
-      setPicked((prev) => ({ scope, slots: typeof next === "function" ? next(selectionIn(prev, scope)) : next })),
+  const [picked, setPicked] = useState<PickState & { scope: string }>({ scope, ...NO_PICKS });
+  const picks: PickState = picked.scope === scope ? picked : NO_PICKS;
+  const selected = picks.slots;
+  const setPicks = useCallback(
+    (next: (prev: PickState) => PickState) => setPicked((prev) => ({ scope, ...next(prev.scope === scope ? prev : NO_PICKS) })),
     [scope],
   );
+  const manualAvailable = Boolean(offer?.manualTimes);
+  const [manualOn, setManualOn] = useState(false);
+  // When hand-addable cells start (refreshed on each switch or week change; the server refuses past times anyway).
+  const [clock, setClock] = useState(0);
+  const handPicks = useMemo(() => manualPicks(picks), [picks]);
+  const manualSlots = useMemo(() => manualSlotsInput({ slots: selected, manual: handPicks }, duration), [selected, handPicks, duration]);
   const [plannerOpen, setPlannerOpen] = useState(Boolean(planner?.loadBusy));
   const [viewed, setViewed] = useState<readonly string[]>([]);
   const [note, setNote] = useState("");
   const timeZones = useTimeZones();
   const details = offer?.value;
-  const offerSave = useOfferSave(offer?.eventTypeId ?? "", details ?? { title: "", guests: [] });
-  // Links must carry exactly the title and people on screen: no copying until those are saved.
-  const gate: CopyGate = offer && details ? copyGate(offer.eventTypeId, details, offerSave.save) : { canCopy: true };
+  const offerSave = useOfferSave(offer?.eventTypeId ?? "", details ?? { title: "", guests: [] }, manualSlots);
+  // Links must carry exactly the title, people and hand-added times on screen: no copying until those are saved.
+  const gate: CopyGate = offer && details ? copyGate(offer.eventTypeId, details, offerSave.save, manualSlots) : { canCopy: true };
+  const fieldErrors = !gate.canCopy && gate.status === "error" && offerSave.save.status === "error" ? offerSave.save.fieldErrors : undefined;
   const offerId = gate.canCopy ? gate.offerId : undefined;
   const customTitle = details?.title.trim() || undefined;
 
@@ -172,12 +187,22 @@ function EmailEmbedEditor({
     return map;
   }, [week.slots, timeZone]);
 
-  // Keep the active day inside the shown week, preferring the first day with free times.
+  const offered = week.status === "ready" ? week.slots : EMPTY_SLOTS;
+  const grid = useMemo(() => (timeZone ? slotGrid(offered, duration, timeZone) : { step: duration, phase: 0 }), [offered, duration, timeZone]);
+  // Same hours as the planner grid, so the picker below offers exactly the grid's cells.
+  const choices = useMemo(() => {
+    if (!manualAvailable || !timeZone) return new Map<string, string[]>();
+    const hours = displayHours([...offered, ...selected], duration, days, timeZone, manualOn ? MANUAL_HOURS : undefined);
+    return manualChoices({ days, timeZone, hours, step: grid.step, phase: grid.phase, free: new Set(offered), now: Math.max(clock, env?.now ?? 0), on: manualOn && week.status === "ready", picked: handPicks });
+  }, [manualAvailable, timeZone, offered, selected, duration, days, manualOn, week.status, grid, handPicks, clock, env]);
+
+  // Keep the active day inside the shown week, preferring the first day with free (or hand-addable) times.
   const dayKeys = days.map(formatDate);
+  const hasTimes = (d: string) => slotsByDay.has(d) || (choices.get(d)?.length ?? 0) > 0;
   const shownDay =
-    activeDay && dayKeys.includes(activeDay) && (week.status !== "ready" || slotsByDay.has(activeDay))
+    activeDay && dayKeys.includes(activeDay) && (week.status !== "ready" || hasTimes(activeDay))
       ? activeDay
-      : (dayKeys.find((d) => slotsByDay.has(d)) ?? dayKeys[0] ?? null);
+      : (dayKeys.find((d) => slotsByDay.has(d)) ?? dayKeys.find(hasTimes) ?? dayKeys[0] ?? null);
 
   const prefs = useMemo(
     () => ({ locale: env?.locale ?? "en", timeZone: timeZone ?? "UTC", hour12 }),
@@ -223,6 +248,7 @@ function EmailEmbedEditor({
     const today = localDateOf(Date.now(), timeZone);
     setWeekStart(formatDate(next) < formatDate(today) ? today : next);
     setActiveDay(null);
+    setClock(Date.now());
   };
 
   const changeTimeZone = (tz: string) => {
@@ -236,8 +262,19 @@ function EmailEmbedEditor({
     const next = Number(value);
     if (!booking.durations.includes(next)) return;
     setDuration(next);
-    setSelected([]); // slots of another duration differ
+    setPicks(() => NO_PICKS); // slots of another duration differ, and hand-added times belong to one duration
   };
+
+  const changeManual = (on: boolean) => {
+    setManualOn(on);
+    setClock(Date.now());
+  };
+  const toggleFree = (slot: string) => setPicks((prev) => togglePick(prev, slot, MAX_EMAIL_SLOTS));
+  const toggleHand = (slot: string) => setPicks((prev) => togglePick(prev, slot, MAX_EMAIL_SLOTS, true));
+  const manualSwitch = manualAvailable && <ManualTimesSwitch on={manualOn} onChange={changeManual} error={fieldErrors?.manualSlots} />;
+  const manualNotice = manualAvailable && <ManualTimesNotice count={handPicks.length} />;
+  // Without the planner (no calendars to view), the switch sits above the day picker instead.
+  const inlineManual = manualAvailable && !planner?.loadBusy;
 
   const today = formatDate(localDateOf(env.now, timeZone));
   const html = email && "html" in email ? email.html : "";
@@ -292,6 +329,7 @@ function EmailEmbedEditor({
           </div>
         </div>
 
+        {inlineManual && manualSwitch}
         <EmailSlotPicker
           days={days}
           canGoBack={formatDate(weekStart) > today}
@@ -301,12 +339,14 @@ function EmailEmbedEditor({
           slotsByDay={slotsByDay}
           selected={selected}
           limit={MAX_EMAIL_SLOTS}
-          onToggle={(slot) => setSelected((prev) => toggleSlot(prev, slot, MAX_EMAIL_SLOTS))}
+          onToggle={toggleFree}
           week={week}
           prefs={prefs}
           busyNames={viewedPeople.length > 0 ? busyNames : undefined}
+          manual={manualAvailable ? { choices, onToggle: toggleHand } : undefined}
         />
 
+        {inlineManual && manualNotice}
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm text-muted-foreground" aria-live="polite" data-testid="email-embed-count">
             {selected.length} of {MAX_EMAIL_SLOTS} times selected
@@ -317,7 +357,7 @@ function EmailEmbedEditor({
             size="sm"
             className="rounded-md"
             disabled={selected.length === 0}
-            onClick={() => setSelected([])}
+            onClick={() => setPicks(() => NO_PICKS)}
           >
             Clear
           </Button>
@@ -377,7 +417,7 @@ function EmailEmbedEditor({
       eventTypeId={offer.eventTypeId}
       value={details}
       onChange={offer.onChange}
-      fieldErrors={!gate.canCopy && gate.status === "error" && offerSave.save.status === "error" ? offerSave.save.fieldErrors : undefined}
+      fieldErrors={fieldErrors}
     />
   );
 
@@ -397,14 +437,16 @@ function EmailEmbedEditor({
           timeZone={timeZone}
           prefs={prefs}
           duration={duration}
-          offered={week.status === "ready" ? week.slots : []}
+          offered={offered}
           selected={selected}
           limit={MAX_EMAIL_SLOTS}
-          onToggleSlot={(slot) => setSelected((prev) => toggleSlot(prev, slot, MAX_EMAIL_SLOTS))}
+          onToggleSlot={(slot, byHand) => (byHand ? toggleHand(slot) : toggleFree(slot))}
           onWeek={changeWeek}
           canGoBack={formatDate(weekStart) > today}
+          manual={manualAvailable ? { on: manualOn, control: manualSwitch, choices, picks: handPicks, step: grid.step } : undefined}
         />
       )}
+      {planner?.loadBusy && manualNotice}
       {editor}
     </div>
   );

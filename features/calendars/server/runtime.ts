@@ -8,7 +8,7 @@ import { TtlCache } from "@/lib/ttl-cache";
 import type { IntegrationDeps } from "./credentials";
 import { BookingFailure } from "@/features/bookings/server/core";
 import { CalendarUnavailableError } from "@/lib/calendars/safety";
-import { BOOKING_MAX_AGE_MS, getExternalBusy } from "./busy";
+import { assertBookingWritable, BOOKING_MAX_AGE_MS, getExternalBusy } from "./busy";
 import { createIntegrationDeps } from "./deps";
 
 /** Web-process singleton of the integration layer. */
@@ -44,6 +44,19 @@ export function externalBusyFor(host: { id: string; timeZone: string }, eventTyp
       throw error;
     }
   };
+}
+
+/**
+ * For a booking on a time added by hand to a scheduling offer (no calendar read): refuses with
+ * CALENDAR_UNAVAILABLE when a required host's booking couldn't be written to their calendar.
+ */
+export async function calendarWritableFor(host: { id: string }, eventTypeId: string): Promise<void> {
+  try {
+    await assertBookingWritable(getIntegrationDeps().db, { userId: host.id, eventTypeId });
+  } catch (error) {
+    if (error instanceof CalendarUnavailableError) throw new BookingFailure("CALENDAR_UNAVAILABLE", error.reason);
+    throw error;
+  }
 }
 
 /**

@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import type { ReactNode } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -9,6 +10,8 @@ import { normalize } from "@/lib/availability/intervals";
 import { formatDate, localDateOf, type LocalDate, wallToUtc } from "@/lib/availability/tz";
 import { cn } from "@/lib/cn";
 import { type FormatPrefs, formatShortDate, formatTime } from "@/lib/format";
+import { MANUAL_HOURS } from "./manual-times";
+import { MANUAL_PICK_CLASS } from "./manual-times-fields";
 import { colorFor, dayBlocks, displayHours, shownPeople, slotIntervals } from "./planner";
 import type { ViewedCalendarsState } from "./use-viewed-calendars";
 
@@ -35,9 +38,25 @@ type CalendarOverlayProps = {
   offered: readonly string[];
   selected: readonly string[];
   limit: number;
-  onToggleSlot: (slot: string) => void;
+  /** `byHand` is true for a time the calendar does not offer, added by hand. */
+  onToggleSlot: (slot: string, byHand?: boolean) => void;
   onWeek: (delta: -1 | 1) => void;
   canGoBack: boolean;
+  /** "Add times by hand" (Email times only). Without it the grid offers free times only. */
+  manual?: PlannerManual;
+};
+
+export type PlannerManual = {
+  /** The switch is on: other future cells can be added by hand. */
+  on: boolean;
+  /** The switch and its error, shown in the planner. */
+  control: ReactNode;
+  /** Hand-addable and hand-added starts per local day (yyyy-MM-dd), from `manualChoices`. */
+  choices: ReadonlyMap<string, readonly string[]>;
+  /** Picks that were added by hand. */
+  picks: readonly string[];
+  /** Height of one cell, in minutes (the meeting type's slot step). */
+  step: number;
 };
 
 /**
@@ -46,13 +65,16 @@ type CalendarOverlayProps = {
  * never changes the host, and never hides an offered time.
  */
 export function CalendarOverlay(props: CalendarOverlayProps) {
-  const { open, onOpen, hostLabel, calendars, viewed, onToggleViewed, days, timeZone, prefs, duration, offered, selected, limit, onToggleSlot, onWeek, canGoBack } = props;
+  const { open, onOpen, hostLabel, calendars, viewed, onToggleViewed, days, timeZone, prefs, duration, offered, selected, limit, onToggleSlot, onWeek, canGoBack, manual } = props;
   const people = calendars.members;
   const shown = shownPeople(people, viewed);
-  const hours = displayHours([...offered, ...selected], duration, days, timeZone);
+  const hours = displayHours([...offered, ...selected], duration, days, timeZone, manual?.on ? MANUAL_HOURS : undefined);
   const height = (hours.to - hours.from) * HOUR_PX;
   const offeredFree = normalize(slotIntervals(offered, duration));
-  const picks = slotIntervals(selected, duration);
+  const byHand = new Set(manual?.picks ?? []);
+  const picks = slotIntervals(selected.filter((s) => !byHand.has(s)), duration);
+  const handPicks = slotIntervals(selected.filter((s) => byHand.has(s)), duration);
+  const showManualLegend = Boolean(manual && (manual.on || manual.picks.length > 0));
   const first = days[0];
   const visibleDays = new Set(days.map(formatDate));
   const otherWeeks = selected.filter((slot) => !visibleDays.has(formatDate(localDateOf(Date.parse(slot), timeZone)))).length;
@@ -128,6 +150,8 @@ export function CalendarOverlay(props: CalendarOverlayProps) {
             </fieldset>
           )}
 
+          {manual?.control}
+
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
               <span className="inline-block size-3 rounded-sm bg-success/25" aria-hidden /> Host free
@@ -135,6 +159,11 @@ export function CalendarOverlay(props: CalendarOverlayProps) {
             <span className="flex items-center gap-1">
               <span className="inline-block size-3 rounded-sm border-2 border-primary" aria-hidden /> Your picks
             </span>
+            {showManualLegend && (
+              <span className="flex items-center gap-1">
+                <span className={cn("inline-block size-3 rounded-sm", MANUAL_PICK_CLASS)} aria-hidden /> Added by hand
+              </span>
+            )}
             <span>Times in {timeZone.replaceAll("_", " ")}</span>
             {calendars.status === "loading" && people.length > 0 && <span aria-live="polite">Updating…</span>}
           </div>
@@ -142,7 +171,7 @@ export function CalendarOverlay(props: CalendarOverlayProps) {
           <div className="flex items-center justify-between gap-2" role="group" aria-label="Calendar week">
             <div className="flex flex-col gap-0.5 text-xs">
               <p className="text-muted-foreground">
-                {first && `${dayLabel(first, prefs)} to ${dayLabel(days[days.length - 1], prefs)}`} · {duration} min. Click a free time to offer it.
+                {first && `${dayLabel(first, prefs)} to ${dayLabel(days[days.length - 1], prefs)}`} · {duration} min. {manual?.on ? "Click a free time to offer it, or any other time to add it by hand." : "Click a free time to offer it."}
               </p>
               <p role="status" className="font-medium">{selectionSummary}</p>
             </div>
@@ -176,12 +205,14 @@ export function CalendarOverlay(props: CalendarOverlayProps) {
 
               {days.map((d) => {
                 const busyNames = shown.filter((p) => dayBlocks(p.busy, d, timeZone, hours).length > 0).map((p) => p.name);
-                const pickCount = dayBlocks(picks, d, timeZone, hours).length;
+                const handCount = dayBlocks(handPicks, d, timeZone, hours).length;
+                const pickCount = dayBlocks(picks, d, timeZone, hours).length + handCount;
+                const manualCells = manual?.choices.get(formatDate(d)) ?? [];
                 return (
                   <div
                     key={formatDate(d)}
                     role="group"
-                    aria-label={`${dayLabel(d, prefs)}: ${pickCount} ${pickCount === 1 ? "pick" : "picks"}${busyNames.length ? `, busy: ${busyNames.join(", ")}` : ""}`}
+                    aria-label={`${dayLabel(d, prefs)}: ${pickCount} ${pickCount === 1 ? "pick" : "picks"}${handCount ? `, ${handCount} added by hand` : ""}${busyNames.length ? `, busy: ${busyNames.join(", ")}` : ""}`}
                     className="relative overflow-hidden rounded-sm bg-muted/60"
                     style={{ height }}
                   >
@@ -206,6 +237,29 @@ export function CalendarOverlay(props: CalendarOverlayProps) {
                         />
                       )),
                     )}
+                    {manual &&
+                      manualCells.map((slot) => {
+                        const block = dayBlocks(slotIntervals([slot], Math.min(manual.step, duration)), d, timeZone, hours)[0];
+                        if (!block) return null;
+                        const pressed = selected.includes(slot);
+                        const label = `Offer ${dayLabel(d, prefs)} at ${formatTime(Date.parse(slot), prefs)} by hand`;
+                        return (
+                          <button
+                            key={`hand-${slot}`}
+                            type="button"
+                            aria-label={label}
+                            title={label}
+                            aria-pressed={pressed}
+                            data-manual-start={slot}
+                            disabled={!pressed && selected.length >= limit}
+                            onClick={() => onToggleSlot(slot, true)}
+                            className="absolute inset-x-0.5 z-[5] overflow-hidden rounded-[3px] border border-dashed border-transparent px-0.5 text-left text-[10px] leading-none tabular-nums hover:border-warning-foreground hover:bg-warning/60 focus-visible:outline-2 focus-visible:outline-primary disabled:hover:border-transparent disabled:hover:bg-transparent"
+                            style={{ top: `${block.top}%`, height: `${block.height}%` }}
+                          >
+                            {pressed ? formatTime(Date.parse(slot), prefs) : null}
+                          </button>
+                        );
+                      })}
                     {offered.map((slot) => {
                       if (formatDate(localDateOf(Date.parse(slot), timeZone)) !== formatDate(d)) return null;
                       const block = dayBlocks(slotIntervals([slot], duration), d, timeZone, hours)[0];
@@ -232,6 +286,13 @@ export function CalendarOverlay(props: CalendarOverlayProps) {
                       <span
                         key={`p${i}`}
                         className="pointer-events-none absolute inset-x-0.5 rounded-[3px] border-2 border-primary bg-primary/10"
+                        style={{ top: `${b.top}%`, height: `${b.height}%` }}
+                      />
+                    ))}
+                    {dayBlocks(handPicks, d, timeZone, hours).map((b, i) => (
+                      <span
+                        key={`h${i}`}
+                        className={cn("pointer-events-none absolute inset-x-0.5 z-[4] rounded-[3px]", MANUAL_PICK_CLASS)}
                         style={{ top: `${b.top}%`, height: `${b.height}%` }}
                       />
                     ))}

@@ -7,6 +7,7 @@ import { getProvider } from "@/lib/integrations/registry";
 import type { BusyInterval, ProviderId } from "@/lib/integrations/types";
 import { errorSummary, logger } from "@/lib/logger";
 import { isHostOf } from "@/features/bookings/server/core";
+import { selectConflictCalendars } from "./conflict-note";
 import { assertConferencingReady } from "./conferencing";
 import { type IntegrationDeps, withCredential } from "./credentials";
 
@@ -70,9 +71,8 @@ async function conflictCalendars(db: Database, userId: string, eventTypeId?: str
       ),
     )
     .where(eq(connectedCalendar.userId, userId));
-  const override = rows.filter((r) => r.overrideFor !== null);
-  const chosen = override.length ? override : rows.filter((r) => r.checkConflicts);
-  return chosen.map(({ invalidAt, checkConflicts: _c, overrideFor: _o, ...r }) => ({ ...r, invalid: invalidAt !== null }));
+  const chosen = selectConflictCalendars(rows.map((r) => ({ ...r, inTypeList: r.overrideFor !== null })));
+  return chosen.map(({ invalidAt, checkConflicts: _c, overrideFor: _o, inTypeList: _t, ...r }) => ({ ...r, invalid: invalidAt !== null }));
 }
 
 /** The calendar bookings are written to, mirroring sync.ts: event type override, else the host's default. */
@@ -207,6 +207,19 @@ export async function getExternalBusy(
       .map((b) => ({ start: b.start, end: b.end, ref: cal.name })),
   );
   return { busy, degraded };
+}
+
+/**
+ * The write-side half of getExternalBusy's checks, without reading any calendar: for a host who
+ * must have a working calendar, the booking's destination calendar must exist, be theirs, be
+ * writable and have a valid credential; a Zoom-only event type needs their Zoom connection. Used
+ * for a time added by hand to a scheduling offer, which is booked without reading the calendars.
+ * Throws CalendarUnavailableError like getExternalBusy.
+ */
+export async function assertBookingWritable(db: Database, input: { userId: string; eventTypeId?: string; requireCalendar?: boolean }): Promise<void> {
+  const required = input.requireCalendar ?? isCalendarRequired({ id: input.userId });
+  if (required) assertDestinationUsable(await destinationState(db, input.userId, input.eventTypeId), required);
+  await assertConferencingReady(db, input.userId, input.eventTypeId);
 }
 
 /** Drops cached busy data for a calendar after we wrote to it (write-through). */

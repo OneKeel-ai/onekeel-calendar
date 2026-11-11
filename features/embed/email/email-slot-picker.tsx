@@ -24,6 +24,12 @@ type EmailSlotPickerProps = {
   prefs: FormatPrefs;
   /** Viewed calendars busy during a slot. Only marks the chip; the time stays offered and pickable. */
   busyNames?: (slot: string) => readonly string[];
+  /** "Add times by hand" (Email times only): other times of the day that can be, or were, added by hand. */
+  manual?: {
+    /** Hand-addable and hand-added starts per local day (yyyy-MM-dd). */
+    choices: ReadonlyMap<string, readonly string[]>;
+    onToggle: (slot: string) => void;
+  };
 };
 
 /** Calendar dates are formatted at noon UTC in UTC, so the weekday never shifts with the zone. */
@@ -31,11 +37,12 @@ const dayLabel = (day: LocalDate, prefs: FormatPrefs) => formatShortDate(wallToU
 
 /** Week navigation, one button per day (with its free-slot count) and toggle chips for the day's slots. */
 export function EmailSlotPicker(props: EmailSlotPickerProps) {
-  const { days, canGoBack, onWeek, activeDay, onActiveDay, slotsByDay, selected, limit, onToggle, week, prefs, busyNames } = props;
+  const { days, canGoBack, onWeek, activeDay, onActiveDay, slotsByDay, selected, limit, onToggle, week, prefs, busyNames, manual } = props;
   const first = days[0];
   const last = days[days.length - 1];
   const loading = week.status === "loading" || week.status === "idle";
   const daySlots = activeDay ? (slotsByDay.get(activeDay) ?? []) : [];
+  const handSlots = activeDay ? (manual?.choices.get(activeDay) ?? []) : [];
   const full = selected.length >= limit;
 
   return (
@@ -58,6 +65,7 @@ export function EmailSlotPicker(props: EmailSlotPickerProps) {
         {days.map((day) => {
           const key = formatDate(day);
           const count = slotsByDay.get(key)?.length ?? 0;
+          const handCount = manual?.choices.get(key)?.length ?? 0;
           const active = key === activeDay;
           return (
             <button
@@ -65,7 +73,7 @@ export function EmailSlotPicker(props: EmailSlotPickerProps) {
               type="button"
               aria-pressed={active}
               data-day={key}
-              disabled={!loading && count === 0}
+              disabled={!loading && count === 0 && handCount === 0}
               onClick={() => onActiveDay(key)}
               className={cn(
                 "flex flex-col items-center rounded-md border border-border px-1 py-1.5 text-xs outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50",
@@ -95,7 +103,9 @@ export function EmailSlotPicker(props: EmailSlotPickerProps) {
           ))}
         </div>
       ) : daySlots.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No free times this week. Try the next week.</p>
+        <p className="text-sm text-muted-foreground">
+          {handSlots.length > 0 ? "No free times on this day." : "No free times this week. Try the next week."}
+        </p>
       ) : (
         <div className="flex flex-wrap gap-2" role="group" aria-label="Available times">
           {daySlots.map((slot) => {
@@ -119,6 +129,33 @@ export function EmailSlotPicker(props: EmailSlotPickerProps) {
               </Toggle>
             );
           })}
+        </div>
+      )}
+      {manual && handSlots.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <span id="email-embed-hand-label" className="text-xs font-medium text-muted-foreground">
+            Add by hand
+          </span>
+          <div className="flex flex-wrap gap-2" role="group" aria-labelledby="email-embed-hand-label">
+            {handSlots.map((slot) => {
+              const pressed = selected.includes(slot);
+              const time = formatTime(Date.parse(slot), prefs);
+              return (
+                <Toggle
+                  key={slot}
+                  variant="outline"
+                  data-manual-start={slot}
+                  pressed={pressed}
+                  disabled={!pressed && full}
+                  onPressedChange={() => manual.onToggle(slot)}
+                  aria-label={`${time}, by hand`}
+                  className="rounded-md border-dashed tabular-nums data-[state=on]:border-warning-foreground data-[state=on]:bg-warning data-[state=on]:text-warning-foreground"
+                >
+                  {time}
+                </Toggle>
+              );
+            })}
+          </div>
         </div>
       )}
       {busyNames && daySlots.length > 0 && (

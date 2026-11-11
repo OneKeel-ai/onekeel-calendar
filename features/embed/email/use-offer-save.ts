@@ -2,27 +2,31 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { offerContactsAction, saveOfferAction } from "@/features/offers/server/actions";
-import { isEmptyDetails, type MeetingDetailsValue, type OfferContact, offerKey, type OfferSaveState } from "./meeting-details";
+import { isEmptyOffer, type MeetingDetailsValue, type OfferContact, offerKey, type OfferManualSlot, type OfferSaveState } from "./meeting-details";
 
 const SAVE_DELAY_MS = 500;
 const SAVE_FAILED = "Couldn't save meeting details. Check your connection and try again.";
 
+type SaveInput = { eventTypeId: string; title: string; guests: string[]; manualSlots: OfferManualSlot[] };
+
+const NO_MANUAL: readonly OfferManualSlot[] = [];
+
 /**
- * Saves the title and invited people for this meeting type about 500 ms after the last change.
- * Only the latest request counts: an older answer arriving late is ignored. Nothing is saved while
- * both are empty (links then carry no offer, as before).
+ * Saves the title, invited people and hand-added times for this meeting type about 500 ms after
+ * the last change. Only the latest request counts: an older answer arriving late is ignored.
+ * Nothing is saved while all are empty (links then carry no offer, as before).
  */
-export function useOfferSave(eventTypeId: string, value: Pick<MeetingDetailsValue, "title" | "guests">) {
+export function useOfferSave(eventTypeId: string, value: Pick<MeetingDetailsValue, "title" | "guests">, manualSlots: readonly OfferManualSlot[] = NO_MANUAL) {
   const [save, setSave] = useState<OfferSaveState>({ status: "idle" });
   const seq = useRef(0);
   const saved = useRef<{ key: string; offerId: string | null } | null>(null);
-  const empty = isEmptyDetails(value);
-  const key = offerKey(eventTypeId, value);
+  const empty = isEmptyOffer(value, manualSlots);
+  const key = offerKey(eventTypeId, value, manualSlots);
   const title = value.title.trim();
   const guests = value.guests;
 
   const run = useCallback(
-    async (requestKey: string, input: { eventTypeId: string; title: string; guests: string[] }) => {
+    async (requestKey: string, input: SaveInput) => {
       const id = ++seq.current;
       setSave({ status: "saving", key: requestKey });
       let next: OfferSaveState;
@@ -52,9 +56,9 @@ export function useOfferSave(eventTypeId: string, value: Pick<MeetingDetailsValu
       setSave({ status: "saved", key: known.key, offerId: known.offerId });
       return;
     }
-    const timer = setTimeout(() => void run(key, { eventTypeId, title, guests: [...guests] }), SAVE_DELAY_MS);
+    const timer = setTimeout(() => void run(key, { eventTypeId, title, guests: [...guests], manualSlots: [...manualSlots] }), SAVE_DELAY_MS);
     return () => clearTimeout(timer);
-    // `key` covers eventTypeId, title and guests.
+    // `key` covers eventTypeId, title, guests and manualSlots.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, empty, run]);
 
@@ -65,7 +69,10 @@ export function useOfferSave(eventTypeId: string, value: Pick<MeetingDetailsValu
     [],
   );
 
-  const retry = useCallback(() => void run(key, { eventTypeId, title, guests: [...guests] }), [run, key, eventTypeId, title, guests]);
+  const retry = useCallback(
+    () => void run(key, { eventTypeId, title, guests: [...guests], manualSlots: [...manualSlots] }),
+    [run, key, eventTypeId, title, guests, manualSlots],
+  );
 
   return { save, retry };
 }

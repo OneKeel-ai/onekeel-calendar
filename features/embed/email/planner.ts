@@ -77,17 +77,19 @@ const wallMinutes = (ms: number, timeZone: string) => {
 };
 
 /**
- * Hours the grid shows: 8:00 to 18:00, widened to cover every offered time and pick in the
- * shown days. Busy time outside that range can't affect a pick, so it is left out.
+ * Hours the grid shows: 8:00 to 18:00 (or `base`, e.g. 7:00 to 19:00 while adding times by hand),
+ * widened to cover every offered time and pick in the shown days. Busy time outside that range
+ * can't affect a pick, so it is left out.
  */
 export function displayHours(
   starts: readonly string[],
   durationMin: number,
   days: readonly LocalDate[],
   timeZone: string,
+  base: { from: number; to: number } = { from: 8, to: 18 },
 ): { from: number; to: number } {
-  let from = 8;
-  let to = 18;
+  let from = base.from;
+  let to = base.to;
   if (days.length === 0) return { from, to };
   const first = wallToUtc(days[0]!, 0, timeZone);
   const last = wallToUtc(addDays(days[days.length - 1]!, 1), 0, timeZone);

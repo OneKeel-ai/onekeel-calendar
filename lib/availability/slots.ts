@@ -198,3 +198,32 @@ export function isSlotAvailable(
   const hit = result.excluded?.find((s) => s.start === slot.start);
   return { ok: false, reason: hit?.reason ?? "not_offered" };
 }
+
+/** Why a time added by hand can't be booked (a subset of the engine's reasons, plus "in_past"). */
+export type ManualSlotReason = "in_past" | "not_offered" | "booking_conflict" | "buffer" | "slot_held";
+
+/**
+ * Re-validation of a time added by hand to a scheduling offer (one host, not seated). It skips the
+ * host's working hours, date overrides, minimum notice, booking window, per-period limits and the
+ * external calendars (busy times and buffers around them): the person who added it vouched for
+ * those. It still refuses a start in the past, an overlap with another active booking made here
+ * (including both bookings' buffers, which the booking_host exclusion constraint enforces anyway),
+ * and a slot held by another booker session.
+ */
+export function isManualSlotAvailable(
+  event: Pick<EventTypeInput, "durationMin" | "bufferBeforeMin" | "bufferAfterMin">,
+  host: Pick<HostInput, "bookings" | "holds">,
+  slot: Slot,
+  context: { now: Ms; rescheduleUid?: string },
+): { ok: true } | { ok: false; reason: ManualSlotReason } {
+  if (slot.end - slot.start !== event.durationMin * MIN) return { ok: false, reason: "not_offered" };
+  if (slot.start < context.now) return { ok: false, reason: "in_past" };
+  const bookings = host.bookings.filter((b) => b.uid !== context.rescheduleUid);
+  if (bookings.some((b) => b.start < slot.end && b.end > slot.start)) return { ok: false, reason: "booking_conflict" };
+  const padded = { start: slot.start - event.bufferBeforeMin * MIN, end: slot.end + event.bufferAfterMin * MIN };
+  if (bookings.some((b) => b.start - b.bufferBeforeMin * MIN < padded.end && b.end + b.bufferAfterMin * MIN > padded.start)) {
+    return { ok: false, reason: "buffer" };
+  }
+  if (host.holds.some((h) => h.start < slot.end && h.end > slot.start)) return { ok: false, reason: "slot_held" };
+  return { ok: true };
+}

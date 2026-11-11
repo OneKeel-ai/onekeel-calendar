@@ -113,3 +113,33 @@ describe("copy gate", () => {
     expect(copyGate("et1", { ...EMPTY_MEETING_DETAILS, draft: "x" }, { status: "idle" })).toMatchObject({ canCopy: false, status: "draft" });
   });
 });
+
+describe("copy gate with times added by hand", () => {
+  const manual = [{ start: "2026-11-16T13:00:00.000Z", duration: 30 }];
+
+  it("needs a saved offer for a hand-added time alone (no title, no people)", () => {
+    const key = offerKey("et1", EMPTY_MEETING_DETAILS, manual);
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, { status: "idle" }, manual)).toEqual({ canCopy: false, status: "saving", message: SAVING_MESSAGE });
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, { status: "saved", key, offerId: "off_9" }, manual)).toEqual({ canCopy: true, offerId: "off_9" });
+  });
+
+  it("locks copy again when the hand-added times or their length change", () => {
+    const key = offerKey("et1", EMPTY_MEETING_DETAILS, manual);
+    const saved = { status: "saved", key, offerId: "off_9" } as const;
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, saved, [...manual, { start: "2026-11-16T14:00:00.000Z", duration: 30 }])).toMatchObject({ canCopy: false });
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, saved, [{ ...manual[0]!, duration: 60 }])).toMatchObject({ canCopy: false });
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, saved, [])).toEqual({ canCopy: true });
+  });
+
+  it("keeps the old key when nothing was added by hand", () => {
+    expect(offerKey("et1", EMPTY_MEETING_DETAILS, [])).toBe(offerKey("et1", EMPTY_MEETING_DETAILS));
+    expect(offerKey("et1", EMPTY_MEETING_DETAILS, manual)).not.toBe(offerKey("et1", EMPTY_MEETING_DETAILS));
+  });
+
+  it("stays locked on a manualSlots error or a saved offer without an id", () => {
+    const key = offerKey("et1", EMPTY_MEETING_DETAILS, manual);
+    const error = { status: "error", key, message: "Please fix", fieldErrors: { manualSlots: "A time added by hand is in the past" } } as const;
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, error, manual)).toEqual({ canCopy: false, status: "error", message: "Please fix" });
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, { status: "saved", key, offerId: null }, manual)).toMatchObject({ canCopy: false, status: "error" });
+  });
+});

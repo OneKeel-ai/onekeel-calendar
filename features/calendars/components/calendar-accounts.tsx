@@ -2,6 +2,7 @@
 
 import { RadioGroup as RadioGroupPrimitive } from "radix-ui";
 import { Rss } from "lucide-react";
+import Link from "next/link";
 import { useOptimistic, useTransition } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,12 +44,30 @@ type Handlers = {
   onDestination: (id: string) => void;
 };
 
+/** Shared helper for every "Check for conflicts" switch: checking a calendar is not the same as viewing it. */
+export const CONFLICT_HELP_ID = "calendar-conflict-help";
+
+/** "Check for conflicts" means blocking your own meetings; viewing a teammate's calendar lives on Email times. */
+export function ConflictHelp() {
+  return (
+    <p id={CONFLICT_HELP_ID} className="text-[13px] leading-5 text-muted-foreground">
+      Tick only the calendars whose events should block your own meetings. To just look at a teammate&apos;s calendar while
+      picking times, use{" "}
+      <Link href="/schedule" className="font-medium text-foreground underline underline-offset-2">
+        Email times
+      </Link>
+      .
+    </p>
+  );
+}
+
 function ConflictSwitch({ cal, onConflict }: { cal: Calendar; onConflict: Handlers["onConflict"] }) {
   return (
     <Switch
       checked={cal.checkConflicts}
       onCheckedChange={(enabled) => onConflict(cal, enabled)}
       aria-label={`Check ${cal.name} for conflicts`}
+      aria-describedby={CONFLICT_HELP_ID}
       className="after:-inset-3"
     />
   );
@@ -244,6 +263,7 @@ export function CalendarAccounts({ connections, oauthProviders }: { connections:
   // Accounts first, then feeds (as in the design).
   return (
     <>
+      <ConflictHelp />
       {optimistic
         .filter((conn) => conn.provider !== "ics_feed")
         .map((conn) => (

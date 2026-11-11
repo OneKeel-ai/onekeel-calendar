@@ -1,9 +1,10 @@
 import { getDb } from "@/db/client";
 import { slotsQuerySchema } from "@/features/bookings/schemas";
-import { BookingFailure, findBookingForManage, getAvailableSlots, getTeamSlots } from "@/features/bookings/server/service";
-import { cachedExternalBusyFor } from "@/features/calendars/server/runtime";
+import { BookingFailure, findBookingForManage, getAvailableSlots, getManualOfferSlots, getTeamSlots, withManualSlots } from "@/features/bookings/server/service";
+import { cachedExternalBusyFor, calendarWritableFor } from "@/features/calendars/server/runtime";
 import { publicBookingContext } from "@/features/bookings/server/public-context";
 import { isUsablePrivateLink } from "@/features/event-types/server/private-links";
+import { loadOffer } from "@/features/offers/server/service";
 import { slotLatency } from "@/lib/metrics";
 import { clientIp, overLocalLimit } from "@/lib/security/public-limits";
 
@@ -37,25 +38,41 @@ async function compute(request: Request, input: unknown) {
   const { target, host, eventType, schedule } = context;
   // The booking being moved only stops counting as busy for someone holding its manage token.
   let rescheduleUid: string | undefined;
+  let offerId = q.offer;
   if (q.reschedule && q.token) {
     const manage = await findBookingForManage(db, q.reschedule, q.token);
-    if (manage?.canManage && manage.booking.eventTypeId === eventType.id) rescheduleUid = q.reschedule;
+    if (manage?.canManage && manage.booking.eventTypeId === eventType.id) {
+      rescheduleUid = q.reschedule;
+      // Moving a booking made from an offer: that offer's times added by hand (never the URL's).
+      offerId = manage.booking.offerId ?? undefined;
+    }
   }
   // Link-only event types answer only for holders of a usable single-use link (EVT-015) or of
   // a booking they are moving.
   if (eventType.linkOnly && !rescheduleUid && !(await isUsablePrivateLink(db, eventType.id, q.link, Date.now()))) {
     return json({ error: "Not found" }, 404);
   }
+  const slotRequest = { eventType, durationMin: q.duration, window: { start: q.start, end: q.end }, now: Date.now(), rescheduleUid, ownHoldToken: q.hold, displayCache: true };
+  // Times added by hand to a valid offer for this event type with one host. They don't need the
+  // host's calendars read, so they stay listed when a required calendar can't be checked.
+  let manual: Awaited<ReturnType<typeof getManualOfferSlots>> = [];
+  const singleHost = target.hosts ? (target.hosts.length === 1 ? target.hosts[0].host : null) : host;
+  if (offerId && singleHost) {
+    const offer = await loadOffer(db, offerId, eventType.id);
+    // Only for the host they were saved for: a later change of host doesn't carry them over.
+    if (offer?.manualSlots.length && offer.manualHostId === singleHost.id) manual = await getManualOfferSlots(db, { ...slotRequest, host: singleHost, manualSlots: offer.manualSlots });
+  }
   try {
-    const request = { eventType, durationMin: q.duration, window: { start: q.start, end: q.end }, now: Date.now(), rescheduleUid, ownHoldToken: q.hold, displayCache: true };
     const slots = target.hosts
-      ? await getTeamSlots(db, { ...request, hosts: target.hosts, externalBusyFor: (hostId) => cachedExternalBusyFor(target.hosts!.find((h) => h.host.id === hostId)!.host, eventType.id) })
-      : await getAvailableSlots(db, { ...request, host, externalBusy: cachedExternalBusyFor(host, eventType.id), schedule });
-    return json({ slots: slots.map((s) => ({ start: s.start, end: s.end, ...(s.seatsRemaining !== undefined && { seats: s.seatsRemaining }) })) });
+      ? await getTeamSlots(db, { ...slotRequest, hosts: target.hosts, externalBusyFor: (hostId) => cachedExternalBusyFor(target.hosts!.find((h) => h.host.id === hostId)!.host, eventType.id) })
+      : await getAvailableSlots(db, { ...slotRequest, host, externalBusy: cachedExternalBusyFor(host, eventType.id), schedule });
+    return json({ slots: withManualSlots(slots, manual).map((s) => ({ start: s.start, end: s.end, ...(s.seatsRemaining !== undefined && { seats: s.seatsRemaining }) })) });
   } catch (error) {
-    // A required calendar can't be checked: no slots, with a reason the page can show.
+    // A required calendar can't be checked: no slots (times added by hand excepted), with a reason the page can show.
     if (error instanceof BookingFailure && error.code === "CALENDAR_UNAVAILABLE") {
-      return json({ slots: [], unavailable: "calendar_unavailable", message: "Online booking is temporarily unavailable. Please contact the host directly." });
+      // ...unless the booking itself has nowhere to be written: then nothing can be booked at all.
+      const writable = manual.length > 0 && singleHost ? await calendarWritableFor(singleHost, eventType.id).then(() => true, () => false) : false;
+      return json({ slots: (writable ? manual : []).map((s) => ({ start: s.start, end: s.end })), unavailable: "calendar_unavailable", message: "Online booking is temporarily unavailable. Please contact the host directly." });
     }
     if (error instanceof BookingFailure) return json({ error: error.code }, 400);
     throw error;

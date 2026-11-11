@@ -1,10 +1,11 @@
 import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import type { Database, Tx } from "@/db/client";
 import { attendee, booking, bookingHost, bookingReference, eventType, eventTypeQuestion, schedulingOffer, slotReservation, team, user } from "@/db/schema";
-import { computeSlots, computeTeamSlots, isSlotAvailable, type TeamHostInput, type TeamSlot } from "@/lib/availability";
+import { computeSlots, computeTeamSlots, isManualSlotAvailable, isSlotAvailable, type TeamHostInput, type TeamSlot } from "@/lib/availability";
 import type { HostInput, Interval, Slot } from "@/lib/availability/types";
 import { hashToken, newId, tokenMatches } from "@/lib/ids";
 import { durationsOf, type EventTypeView, type PublicHost, toEngineEvent } from "@/features/event-types/server/service";
+import { findManualSlot, loadOffer, type ManualSlot } from "@/features/offers/server/service";
 import { type ScheduleView, scheduleForEventType, toScheduleInput } from "@/features/schedules/server/service";
 import { ACTIVE, assertPlausibleStart, BookingFailure, type AttendeeRow, type BookingRow, deactivate, type ExternalBusyFn, HOLD_TTL_MS, isBookingManager, MIN, validationWindow, withExternal } from "./core";
 import { canRequestReschedule } from "../reschedulable";
@@ -90,6 +91,59 @@ export async function getAvailableSlots(db: Database, input: SlotsRequest): Prom
   return [...computeSlots(toEngineEvent(req.eventType, req.durationMin), host, { now: req.now, window: req.window, rescheduleUid: req.rescheduleUid }).slots];
 }
 
+export type ManualSlotsRequest = {
+  host: PublicHost;
+  eventType: EventTypeView;
+  durationMin: number;
+  window: { start: number; end: number };
+  now: number;
+  rescheduleUid?: string;
+  ownHoldToken?: string;
+  /** The offer's times added by hand (already resolved for this event type and its single host). */
+  manualSlots: readonly ManualSlot[];
+  displayCache?: boolean;
+};
+
+/**
+ * A scheduling offer's times added by hand that the public booking page may show: in the requested
+ * window, in the future, of the requested duration, and not overlapping another active booking
+ * (or someone else's hold) of the host. Working hours, notice, booking window, limits and the
+ * host's calendars don't apply to them (see isManualSlotAvailable). No queries when none match.
+ */
+export async function getManualOfferSlots(db: Database, input: ManualSlotsRequest): Promise<Slot[]> {
+  if (input.eventType.seatsPerSlot) return [];
+  const windows = slotWindows(input.window, input.now);
+  if (!windows) return [];
+  const duration = input.durationMin * MIN;
+  const wanted = input.manualSlots.filter(
+    (s) => s.duration === input.durationMin && s.start >= windows.display.start && s.start < windows.display.end && s.start > input.now,
+  );
+  if (!wanted.length) return [];
+  const loaded = await (input.displayCache ? loadHostInputForDisplay : loadHostInput)(db, {
+    hostId: input.host.id,
+    schedule: { timeZone: "UTC", rules: [], overrides: [] },
+    // Same windows as getAvailableSlots, so the display cache entry is shared.
+    window: input.displayCache ? windows.external : windows.display,
+    now: input.now,
+    ownHoldHash: input.ownHoldToken ? hashToken(input.ownHoldToken) : undefined,
+    eventType: engineScope(input.eventType),
+  });
+  const event = toEngineEvent(input.eventType, input.durationMin);
+  const starts = new Set<number>();
+  for (const s of wanted) {
+    const slot = { start: s.start, end: s.start + duration };
+    if (isManualSlotAvailable(event, loaded, slot, { now: input.now, rescheduleUid: input.rescheduleUid }).ok) starts.add(s.start);
+  }
+  return [...starts].toSorted((a, b) => a - b).map((start) => ({ start, end: start + duration }));
+}
+
+/** The engine's slots plus times added by hand, sorted by start; a start already offered is kept once (the engine's). */
+export function withManualSlots<T extends { start: number; end: number }>(slots: readonly T[], manual: readonly Slot[]): (T | Slot)[] {
+  if (!manual.length) return [...slots];
+  const offered = new Set(slots.map((s) => s.start));
+  return [...slots, ...manual.filter((m) => !offered.has(m.start))].toSorted((a, b) => a.start - b.start);
+}
+
 export type TeamSlotsRequest = Omit<SlotsRequest, "host" | "externalBusy" | "schedule"> & {
   hosts: HostPlan[];
   externalBusyFor?: (hostId: string) => ExternalBusyFn | undefined;
@@ -145,12 +199,23 @@ export async function holdSlot(
     token: string;
     now: number;
     externalBusy?: ExternalBusyFn;
+    /**
+     * Scheduling offer id from the link: a time added by hand to it can be held even when the
+     * host's hours or calendars say otherwise. Unknown or for another event type: OFFER_INVALID.
+     */
+    offer?: string;
   },
 ): Promise<void> {
   if (!durationsOf(input.eventType).includes(input.durationMin)) throw new BookingFailure("INVALID_DURATION");
   assertPlausibleStart(input.start, input.now);
   const sessionTokenHash = hashToken(input.token);
   const slot = { start: input.start, end: input.start + input.durationMin * MIN };
+  let manual = false;
+  if (input.offer) {
+    const offer = await loadOffer(db, input.offer, input.eventType.id);
+    if (!offer || input.eventType.seatsPerSlot) throw new BookingFailure("OFFER_INVALID");
+    manual = Boolean(findManualSlot(offer, input.start, input.durationMin, input.host.id));
+  }
   const sched = await scheduleForEventType(db, input.host.id, input.eventType.scheduleId);
   if (!sched) throw new BookingFailure("NO_SCHEDULE");
   const engineEvent = toEngineEvent(input.eventType, input.durationMin);
@@ -162,12 +227,19 @@ export async function holdSlot(
     ownHoldHash: sessionTokenHash,
     eventType: engineScope(input.eventType),
   });
-  // Cheap check first: only a slot the schedule offers is worth an external calendar read.
-  const pre = isSlotAvailable(engineEvent, local, slot, { now: input.now });
-  if (!pre.ok) throw new BookingFailure("SLOT_UNAVAILABLE", pre.reason);
-  const host = await withExternal(local, input.externalBusy, validationWindow(slot.start));
-  const check = isSlotAvailable(engineEvent, host, slot, { now: input.now });
-  if (!check.ok) throw new BookingFailure("SLOT_UNAVAILABLE", check.reason);
+  let host = local;
+  if (manual) {
+    // A time added by hand: no hours, notice or calendar checks, but never over a booking or another hold.
+    const check = isManualSlotAvailable(engineEvent, local, slot, { now: input.now });
+    if (!check.ok) throw new BookingFailure("SLOT_UNAVAILABLE", check.reason);
+  } else {
+    // Cheap check first: only a slot the schedule offers is worth an external calendar read.
+    const pre = isSlotAvailable(engineEvent, local, slot, { now: input.now });
+    if (!pre.ok) throw new BookingFailure("SLOT_UNAVAILABLE", pre.reason);
+    host = await withExternal(local, input.externalBusy, validationWindow(slot.start));
+    const check = isSlotAvailable(engineEvent, host, slot, { now: input.now });
+    if (!check.ok) throw new BookingFailure("SLOT_UNAVAILABLE", check.reason);
+  }
   if (host.holds.length >= MAX_ACTIVE_HOLDS_PER_HOST) throw new BookingFailure("SLOT_UNAVAILABLE", "hold_limit");
   const values = {
     eventTypeId: input.eventType.id,

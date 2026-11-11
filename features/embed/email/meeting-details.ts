@@ -97,16 +97,26 @@ export function filterSuggestions(contacts: readonly OfferContact[], query: stri
 
 export const isEmptyDetails = (value: Pick<MeetingDetailsValue, "title" | "guests">) => value.title.trim() === "" && value.guests.length === 0;
 
+/** A time added by hand, as saved in the offer (start ISO 8601 UTC, duration in minutes). */
+export type OfferManualSlot = { start: string; duration: number };
+
+/** Nothing to save: no title, no people and no hand-added times (links then carry no offer). */
+export const isEmptyOffer = (value: Pick<MeetingDetailsValue, "title" | "guests">, manualSlots: readonly OfferManualSlot[] = []) =>
+  isEmptyDetails(value) && manualSlots.length === 0;
+
 /** Identifies what has to be saved: the same key means the same saved offer can be used. */
-export function offerKey(eventTypeId: string, value: Pick<MeetingDetailsValue, "title" | "guests">): string {
-  return JSON.stringify([eventTypeId, value.title.trim(), value.guests]);
+export function offerKey(eventTypeId: string, value: Pick<MeetingDetailsValue, "title" | "guests">, manualSlots: readonly OfferManualSlot[] = []): string {
+  const base = [eventTypeId, value.title.trim(), value.guests];
+  return JSON.stringify(manualSlots.length ? [...base, manualSlots.map((m) => [m.start, m.duration])] : base);
 }
 
 export type OfferSaveState =
   | { status: "idle" }
   | { status: "saving"; key: string }
   | { status: "saved"; key: string; offerId: string | null }
-  | { status: "error"; key: string; message: string; fieldErrors?: { title?: string; guests?: string } };
+  | { status: "error"; key: string; message: string; fieldErrors?: OfferFieldErrors };
+
+export type OfferFieldErrors = { title?: string; guests?: string; manualSlots?: string };
 
 export type CopyGate =
   | { canCopy: true; offerId?: string }
@@ -115,17 +125,21 @@ export type CopyGate =
 export const SAVING_MESSAGE = "Saving meeting details…";
 export const DRAFT_MESSAGE = "Finish or remove the address typed in Also invite.";
 
+export const MANUAL_SAVE_FAILED = "Couldn't save the times added by hand. Try again.";
+
 /**
- * Whether the times may be copied. Links must carry the title and people shown on screen, so copy
- * is only allowed when both are empty (no offer, links as before) or when exactly what is on
- * screen has been saved for this meeting type.
+ * Whether the times may be copied. Links must carry the title, people and hand-added times shown
+ * on screen, so copy is only allowed when all are empty (no offer, links as before) or when
+ * exactly what is on screen has been saved for this meeting type.
  */
-export function copyGate(eventTypeId: string, value: MeetingDetailsValue, save: OfferSaveState): CopyGate {
+export function copyGate(eventTypeId: string, value: MeetingDetailsValue, save: OfferSaveState, manualSlots: readonly OfferManualSlot[] = []): CopyGate {
   if (value.draft.trim() !== "") return { canCopy: false, status: "draft", message: DRAFT_MESSAGE };
-  if (isEmptyDetails(value)) return { canCopy: true };
-  const key = offerKey(eventTypeId, value);
+  if (isEmptyOffer(value, manualSlots)) return { canCopy: true };
+  const key = offerKey(eventTypeId, value, manualSlots);
   if (save.status === "saved" && save.key === key) {
-    return save.offerId ? { canCopy: true, offerId: save.offerId } : { canCopy: false, status: "error", message: "The host is already in the meeting. Remove them from Also invite." };
+    if (save.offerId) return { canCopy: true, offerId: save.offerId };
+    const message = value.guests.length > 0 ? "The host is already in the meeting. Remove them from Also invite." : MANUAL_SAVE_FAILED;
+    return { canCopy: false, status: "error", message };
   }
   if (save.status === "error" && save.key === key) return { canCopy: false, status: "error", message: save.message };
   return { canCopy: false, status: "saving", message: SAVING_MESSAGE };

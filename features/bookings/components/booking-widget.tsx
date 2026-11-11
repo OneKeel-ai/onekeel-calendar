@@ -175,6 +175,8 @@ export function BookingWidget(props: BookingWidgetProps) {
       end: span.end,
       hold: holdToken.current,
       ...(form.link && { link: form.link }),
+      // An Email times link: its offer's times added by hand are listed (and bookable) too.
+      ...(form.offer && { offer: form.offer }),
       ...(form.reschedule && { reschedule: form.reschedule.uid, token: form.reschedule.token }),
     };
     setLoading(true);
@@ -198,7 +200,7 @@ export function BookingWidget(props: BookingWidgetProps) {
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [range, timeZone, duration, form.username, form.team, form.slug, form.link, form.reschedule]);
+  }, [range, timeZone, duration, form.username, form.team, form.slug, form.link, form.offer, form.reschedule]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetching is the effect's purpose
@@ -212,7 +214,16 @@ export function BookingWidget(props: BookingWidgetProps) {
       setSlotNotice(null);
       emitEmbed("slotSelected", { start: slot.start, end: slot.end });
       try {
-        const held = await holdSlotAction({ username: form.username, ...(form.team && { team: form.team }), slug: form.slug, start: slot.start, duration, holdToken: holdToken.current, link: form.link });
+        const held = await holdSlotAction({
+          username: form.username,
+          ...(form.team && { team: form.team }),
+          slug: form.slug,
+          start: slot.start,
+          duration,
+          holdToken: holdToken.current,
+          link: form.link,
+          ...(form.offer && { offer: form.offer }),
+        });
         if (!held.ok) {
           setSelectedSlot(null);
           setLoadError(held.message);
@@ -222,7 +233,7 @@ export function BookingWidget(props: BookingWidgetProps) {
         // Holding is best-effort; booking re-validates the slot anyway.
       }
     },
-    [timeZone, duration, form.username, form.team, form.slug, form.link, load],
+    [timeZone, duration, form.username, form.team, form.slug, form.link, form.offer, load],
   );
 
   // `slot=` preselection: once the slot's range has loaded, open the form or explain it's gone.

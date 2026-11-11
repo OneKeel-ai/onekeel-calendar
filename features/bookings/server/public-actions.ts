@@ -8,7 +8,7 @@ import { booking, routingFormResponse } from "@/db/schema";
 import { fieldErrors } from "@/lib/actions";
 import { clientIp, overLimit } from "@/lib/security/public-limits";
 import { hostsMissingZoom } from "@/features/calendars/server/conferencing";
-import { externalBusyFor } from "@/features/calendars/server/runtime";
+import { calendarWritableFor, externalBusyFor } from "@/features/calendars/server/runtime";
 import { cipherFromEnv } from "@/lib/crypto/encryption";
 import { getEnv } from "@/lib/env";
 import { enqueue } from "@/lib/jobs/enqueue";
@@ -91,6 +91,7 @@ export async function holdSlotAction(raw: unknown): Promise<PublicResult> {
       token: parsed.data.holdToken,
       now: Date.now(),
       externalBusy: externalBusyFor(target.host, target.eventType.id),
+      offer: parsed.data.offer,
     });
   } catch (error) {
     if (error instanceof BookingFailure) return { ok: false, message: FAILURE_MESSAGES[error.code] ?? "Unavailable." };
@@ -189,6 +190,8 @@ export async function createBookingAction(raw: CreateBookingPayload): Promise<Cr
       privateLinkToken: input.link,
       recurringCount: input.recurringCount,
       offer: input.offer,
+      calendarWritable: (hostId: string) =>
+        calendarWritableFor(teamHosts ? teamHosts.find((h) => h.host.id === hostId)!.host : target.host, target.eventType.id),
       // Side effects (calendar sync, meeting links, emails) are queued in the same transaction.
       onCommit: async (tx, result) => {
         const event = result.previous ? "rescheduled" : result.booking.status === "pending" ? "requested" : "created";

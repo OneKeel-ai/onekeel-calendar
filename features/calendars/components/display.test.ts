@@ -8,6 +8,7 @@ const cal = (over: Partial<Cal> = {}): Cal => ({
   name: "Work",
   color: null,
   readOnly: false,
+  isPrimary: false,
   checkConflicts: true,
   isDestination: false,
   ...over,

@@ -120,6 +120,13 @@
       "when": 1794331133526,
       "tag": "0016_scheduling_offer",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794359746572,
+      "tag": "0017_manual_slots",
+      "breakpoints": true
     }
   ]
 }

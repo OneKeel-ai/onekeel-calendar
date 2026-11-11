@@ -10,6 +10,8 @@ import { type LoadBusy, pickPrincipal, pickType, planKey } from "@/features/embe
 import { choiceStorage, readChoice, writeChoice } from "@/features/embed/email/schedule-choice";
 import { loadScheduleAvailability } from "../server/scheduling-actions";
 import type { SchedulingPrincipal } from "../types";
+import { conflictNotice, eventTypeEditHref } from "./conflict-note";
+import { ConflictNoticeView } from "./conflict-notice";
 import { ExecutiveSetupSteps } from "./executive-setup";
 
 export type { ScheduleType } from "../types";
@@ -52,6 +54,13 @@ export function ScheduleWorkspace({ principals, appUrl }: { principals: Scheduli
 
   if (!principal || !type) return null;
   const self = principal.teamId === null;
+  // Calendar names come back only when the signed-in user hosts the type (also for a team type they host).
+  const isHost = self || (type.conflictNote?.otherCalendars.length ?? 0) > 0;
+  const notice = conflictNotice(type.conflictNote, {
+    isHost,
+    hostLabel: principal.label,
+    editHref: isHost ? eventTypeEditHref(type.id, principal.teamId) : null,
+  });
 
   const choosePrincipal = (id: string) => {
     setPrincipalId(id);
@@ -113,6 +122,7 @@ export function ScheduleWorkspace({ principals, appUrl }: { principals: Scheduli
             </>
           )}
         </p>
+        <ConflictNoticeView notice={notice} />
       </div>
 
       <div className="rounded-xl border border-border bg-card p-4 md:p-5">
@@ -122,7 +132,9 @@ export function ScheduleWorkspace({ principals, appUrl }: { principals: Scheduli
             target={type.target}
             appUrl={appUrl}
             planner={{ hostLabel: self ? "you" : principal.label, loadBusy: viewTeamId ? loadBusy : undefined }}
-            offer={{ eventTypeId: type.id, value: details, onChange: setDetails }}
+            // Every type here has one host (personal, or a single-host team type). The server still
+            // refuses times added by hand for seated types, and that error is shown by the switch.
+            offer={{ eventTypeId: type.id, value: details, onChange: setDetails, manualTimes: true }}
           />
         ) : (
           <div className="flex flex-col gap-3" aria-busy="true">

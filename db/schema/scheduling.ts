@@ -331,6 +331,12 @@ export const schedulingOffer = pgTable(
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     title: text("title"),
     guests: jsonb("guests").$type<string[]>().notNull().default([]),
+    /**
+     * Times added by hand: bookable from this offer even when the host's calendar or working
+     * hours say otherwise (never over another booking made here). `start` is an ISO 8601 UTC
+     * instant, `duration` in minutes.
+     */
+    manualSlots: jsonb("manual_slots").$type<{ start: string; duration: number; hostId?: string }[]>().notNull().default([]),
     contentHash: text("content_hash").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

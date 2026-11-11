@@ -53,6 +53,14 @@ export function groupTeamTypes(teams: readonly { team: TeamInfo; members: readon
 }
 
 export async function loadTeamPrincipals(db: Database, userId: string): Promise<SchedulingPrincipal[]> {
+  return (await loadTeamPrincipalsWithHosts(db, userId)).principals;
+}
+
+/**
+ * The team groups plus, server-side only, the host of each listed event type (for the conflict
+ * notes). Host ids never go to the browser.
+ */
+export async function loadTeamPrincipalsWithHosts(db: Database, userId: string): Promise<{ principals: SchedulingPrincipal[]; hostOf: Map<string, string> }> {
   const teams = await listMyTeams(db, userId);
   const loaded = await Promise.all(
     teams.map(async (t) => ({
@@ -65,5 +73,8 @@ export async function loadTeamPrincipals(db: Database, userId: string): Promise<
       }),
     })),
   );
-  return groupTeamTypes(loaded);
+  const principals = groupTeamTypes(loaded);
+  // Every listed team type has exactly one host (groupTeamTypes skips the others).
+  const hostOf = new Map(loaded.flatMap((t) => t.types.flatMap((et) => (et.hosts.length === 1 ? [[et.id, et.hosts[0].userId] as const] : []))));
+  return { principals, hostOf };
 }
