@@ -2,36 +2,39 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { offerContactsAction, saveOfferAction } from "@/features/offers/server/actions";
-import { isEmptyOffer, type MeetingDetailsValue, type OfferContact, offerKey, type OfferManualSlot, type OfferSaveState } from "./meeting-details";
+import { type MeetingDetailsValue, type OfferContact, type OfferManualSlot, offerPlan, type OfferRules, type OfferSaveInput, type OfferSaveState, OPEN_RULES } from "./meeting-details";
 
 const SAVE_DELAY_MS = 500;
 const SAVE_FAILED = "Couldn't save meeting details. Check your connection and try again.";
 
-type SaveInput = { eventTypeId: string; title: string; guests: string[]; manualSlots: OfferManualSlot[] };
-
 const NO_MANUAL: readonly OfferManualSlot[] = [];
 
 /**
- * Saves the title, invited people and hand-added times for this meeting type about 500 ms after
- * the last change. Only the latest request counts: an older answer arriving late is ignored.
- * Nothing is saved while all are empty (links then carry no offer, as before).
+ * Saves the title, invited people, hand-added times and who may book (the picked times only, or
+ * any open time) for this meeting type about 500 ms after the last change. Only the latest
+ * request counts: an older answer arriving late is ignored. Nothing is saved while there is
+ * nothing to save (see `offerPlan`).
  */
-export function useOfferSave(eventTypeId: string, value: Pick<MeetingDetailsValue, "title" | "guests">, manualSlots: readonly OfferManualSlot[] = NO_MANUAL) {
+export function useOfferSave(
+  eventTypeId: string,
+  value: Pick<MeetingDetailsValue, "title" | "guests">,
+  manualSlots: readonly OfferManualSlot[] = NO_MANUAL,
+  rules: OfferRules = OPEN_RULES,
+) {
   const [save, setSave] = useState<OfferSaveState>({ status: "idle" });
   const seq = useRef(0);
   const saved = useRef<{ key: string; offerId: string | null } | null>(null);
-  const empty = isEmptyOffer(value, manualSlots);
-  const key = offerKey(eventTypeId, value, manualSlots);
-  const title = value.title.trim();
-  const guests = value.guests;
+  const plan = offerPlan(eventTypeId, value, manualSlots, rules);
+  const key = plan.kind === "save" ? plan.key : null;
+  const input = plan.kind === "save" ? plan.input : null;
 
   const run = useCallback(
-    async (requestKey: string, input: SaveInput) => {
+    async (requestKey: string, request: OfferSaveInput) => {
       const id = ++seq.current;
       setSave({ status: "saving", key: requestKey });
       let next: OfferSaveState;
       try {
-        const result = await saveOfferAction(input);
+        const result = await saveOfferAction(request);
         next = result.ok
           ? { status: "saved", key: requestKey, offerId: result.offerId }
           : { status: "error", key: requestKey, message: result.message || SAVE_FAILED, fieldErrors: result.fieldErrors };
@@ -46,7 +49,7 @@ export function useOfferSave(eventTypeId: string, value: Pick<MeetingDetailsValu
   );
 
   useEffect(() => {
-    if (empty) {
+    if (key === null) {
       seq.current++; // drop any answer still on its way
       return;
     }
@@ -56,11 +59,14 @@ export function useOfferSave(eventTypeId: string, value: Pick<MeetingDetailsValu
       setSave({ status: "saved", key: known.key, offerId: known.offerId });
       return;
     }
-    const timer = setTimeout(() => void run(key, { eventTypeId, title, guests: [...guests], manualSlots: [...manualSlots] }), SAVE_DELAY_MS);
+    const request = input;
+    const timer = setTimeout(() => {
+      if (request) void run(key, request);
+    }, SAVE_DELAY_MS);
     return () => clearTimeout(timer);
-    // `key` covers eventTypeId, title, guests and manualSlots.
+    // `key` covers every field of `input`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, empty, run]);
+  }, [key, run]);
 
   useEffect(
     () => () => {
@@ -69,10 +75,9 @@ export function useOfferSave(eventTypeId: string, value: Pick<MeetingDetailsValu
     [],
   );
 
-  const retry = useCallback(
-    () => void run(key, { eventTypeId, title, guests: [...guests], manualSlots: [...manualSlots] }),
-    [run, key, eventTypeId, title, guests, manualSlots],
-  );
+  const retry = () => {
+    if (key !== null && input) void run(key, input);
+  };
 
   return { save, retry };
 }

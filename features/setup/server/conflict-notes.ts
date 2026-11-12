@@ -2,6 +2,7 @@ import { inArray } from "drizzle-orm";
 import type { DbOrTx } from "@/db/client";
 import { connectedCalendar, eventTypeConflictCalendar } from "@/db/schema";
 import { conflictNoteFor } from "@/features/calendars/server/conflict-note";
+import { blockedCalendarAddressesByUser, isBlockedCalendar } from "@/features/privacy/server/guard";
 import type { ScheduleType } from "../types";
 
 /**
@@ -18,11 +19,12 @@ export async function loadConflictNotes(
   if (!items.length) return notes;
   const hostIds = [...new Set(items.map((i) => i.hostId))];
   const typeIds = [...new Set(items.map((i) => i.eventTypeId))];
-  const [calendars, lists] = await Promise.all([
+  const [all, lists, blocked] = await Promise.all([
     db
       .select({
         id: connectedCalendar.id,
         userId: connectedCalendar.userId,
+        externalId: connectedCalendar.externalId,
         name: connectedCalendar.name,
         isPrimary: connectedCalendar.isPrimary,
         checkConflicts: connectedCalendar.checkConflicts,
@@ -33,7 +35,10 @@ export async function loadConflictNotes(
       .select({ eventTypeId: eventTypeConflictCalendar.eventTypeId, calendarId: eventTypeConflictCalendar.connectedCalendarId })
       .from(eventTypeConflictCalendar)
       .where(inArray(eventTypeConflictCalendar.eventTypeId, typeIds)),
+    blockedCalendarAddressesByUser(db, hostIds),
   ]);
+  // Private calendars: a host's connected copy of someone's private calendar never counts (as in busy.ts).
+  const calendars = all.filter((c) => !isBlockedCalendar(blocked.get(c.userId) ?? new Set(), c.externalId));
   for (const { eventTypeId, hostId } of items) {
     const typeList = new Set(lists.filter((l) => l.eventTypeId === eventTypeId).map((l) => l.calendarId));
     const note = conflictNoteFor(

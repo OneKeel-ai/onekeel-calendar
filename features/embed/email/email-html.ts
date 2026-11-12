@@ -38,6 +38,11 @@ export type EmailEmbedInput = {
   note?: string;
   /** Defaults to MAX_EMAIL_SLOTS. */
   maxSlots?: number;
+  /**
+   * The "See all available times" link (default true). False when the client may book only the
+   * times in the email: the link is left out of both the HTML and the text.
+   */
+  showAllTimes?: boolean;
 };
 
 export type EmailEmbed = { html: string; text: string };
@@ -168,7 +173,8 @@ type Model = {
   timeZoneLine: string;
   note: string | null;
   strings: Strings;
-  allUrl: string;
+  /** null: no "See all available times" link. */
+  allUrl: string | null;
   days: { label: string; slots: { label: string; url: string }[] }[];
 };
 
@@ -189,7 +195,7 @@ function buildModel(input: EmailEmbedInput): Model {
     timeZoneLine: strings.timeZone(timeZoneLabel(input.timeZone, firstInstant, locale)),
     note: note || null,
     strings,
-    allUrl: `${base}/${path}?duration=${encodeURIComponent(String(input.duration))}${offerQuery(input.offer)}`,
+    allUrl: input.showAllTimes === false ? null : `${base}/${path}?duration=${encodeURIComponent(String(input.duration))}${offerQuery(input.offer)}`,
     days: days.map((day) => ({
       // Noon UTC of that calendar date, formatted in UTC: the weekday and date never shift.
       label: formatWeekdayDate(wallToUtc(parseDate(day.date), 12 * 60, "UTC"), { ...prefs, timeZone: "UTC" }),
@@ -243,9 +249,11 @@ function renderHtml(model: Model): string {
     paragraph(model.timeZoneLine, `color:${COLORS.muted};font-size:13px;line-height:18px;`) +
     `</td></tr>` +
     body +
-    `<tr><td style="padding:12px 24px 0 24px;">` +
-    `<a href="${escapeHtml(model.allUrl)}" ${LINK_ATTRS} style="color:${COLORS.link};font-family:${FONT};font-size:14px;line-height:20px;text-decoration:underline;">${escapeHtml(model.strings.seeAll)}</a>` +
-    `</td></tr>` +
+    (model.allUrl
+      ? `<tr><td style="padding:12px 24px 0 24px;">` +
+        `<a href="${escapeHtml(model.allUrl)}" ${LINK_ATTRS} style="color:${COLORS.link};font-family:${FONT};font-size:14px;line-height:20px;text-decoration:underline;">${escapeHtml(model.strings.seeAll)}</a>` +
+        `</td></tr>`
+      : "") +
     `</table></td></tr></table>`
   );
 }
@@ -259,7 +267,7 @@ function renderText(model: Model): string {
     lines.push("", day.label);
     for (const slot of day.slots) lines.push(`- ${slot.label}: ${slot.url}`);
   }
-  lines.push("", `${model.strings.seeAll}: ${model.allUrl}`);
+  if (model.allUrl) lines.push("", `${model.strings.seeAll}: ${model.allUrl}`);
   return lines.join("\n");
 }
 

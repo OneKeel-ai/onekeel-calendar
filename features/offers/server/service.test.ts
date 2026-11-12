@@ -8,7 +8,9 @@ import {
   normalizeManualSlots,
   normalizeOfferGuests,
   normalizeOfferTitle,
+  offerAllows,
   offerContentHash,
+  normalizeOfferedSlots,
 } from "./service";
 
 describe("normalizeOfferTitle", () => {
@@ -154,5 +156,43 @@ describe("findManualSlot", () => {
     const slots = [{ start: 1_000_000, duration: 30 }];
     expect(findManualSlot({ manualSlots: slots, manualHostId: "cy" }, 1_000_000, 30, "dee")).toBeUndefined();
     expect(findManualSlot({ manualSlots: slots, manualHostId: null }, 1_000_000, 30, "cy")).toBeUndefined();
+  });
+});
+
+describe("restricted offers (only the times sent)", () => {
+  const now = Date.parse("2026-10-01T08:00:00Z");
+  const at = (iso: string, duration = 30) => ({ start: iso, duration });
+
+  it("needs 1 to 10 valid, distinct times", () => {
+    expect(normalizeOfferedSlots([], [30], now)).toMatchObject({ ok: false });
+    expect(normalizeOfferedSlots(Array.from({ length: 11 }, (_, i) => at(`2026-10-05T1${i % 10}:${i < 10 ? "00" : "30"}:00Z`)), [30], now)).toMatchObject({ ok: false });
+    expect(normalizeOfferedSlots([at("2026-10-05T10:00:00Z"), at("2026-10-05T10:00:00Z")], [30], now)).toMatchObject({ ok: false });
+    expect(normalizeOfferedSlots([at("2026-10-05T10:00:00Z", 45)], [30], now)).toMatchObject({ ok: false });
+    expect(normalizeOfferedSlots([at("2026-10-05T11:00:00Z"), at("2026-10-05T10:00:00Z")], [30], now)).toEqual({
+      ok: true,
+      slots: [
+        { start: Date.parse("2026-10-05T10:00:00Z"), duration: 30 },
+        { start: Date.parse("2026-10-05T11:00:00Z"), duration: 30 },
+      ],
+    });
+  });
+
+  it("hashes the times order-independently and leaves unrestricted hashes unchanged", () => {
+    const a = { start: 1, duration: 30 };
+    const b = { start: 2, duration: 30 };
+    expect(offerContentHash("T", [], [], null, [a, b])).toBe(offerContentHash("T", [], [], null, [b, a]));
+    expect(offerContentHash("T", [], [], null, [a])).not.toBe(offerContentHash("T", [], [], null, [a, b]));
+    expect(offerContentHash("T", [], [], null, [a])).not.toBe(offerContentHash("T", []));
+    expect(offerContentHash("T", [], [], null, null)).toBe(offerContentHash("T", []));
+  });
+
+  it("allows only the times on the card when restricted, anything otherwise", () => {
+    const offer = { restricted: true, offeredSlots: [{ start: 1000, duration: 30 }] };
+    expect(offerAllows(offer, 1000, 30)).toBe(true);
+    expect(offerAllows(offer, 1000, 60)).toBe(false);
+    expect(offerAllows(offer, 2000, 30)).toBe(false);
+    expect(offerAllows({ restricted: false, offeredSlots: [] }, 2000, 30)).toBe(true);
+    expect(offerAllows(null, 2000, 30)).toBe(true);
+    expect(offerAllows({ restricted: true, offeredSlots: [] }, 1000, 30)).toBe(false);
   });
 });

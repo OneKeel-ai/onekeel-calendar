@@ -5,6 +5,7 @@ import type { ExternalBusyFn } from "@/features/bookings/server/core";
 import { scheduleForEventType, toScheduleInput } from "@/features/schedules/server/service";
 import { expandSchedule, normalize } from "@/lib/availability";
 import type { Interval } from "@/lib/availability/types";
+import { hiddenFromViewer } from "@/features/privacy/server/guard";
 import { requireTeamRole } from "./access";
 import { membersOf } from "./service";
 
@@ -38,7 +39,10 @@ export async function teamAvailability(
 ): Promise<MemberAvailability[]> {
   await requireTeamRole(db, actorId, teamId, "member");
   const span = { start: window.start, end: Math.min(window.end, window.start + MAX_VIEW_DAYS * 86_400_000) };
-  const members = await membersOf(db, teamId);
+  const all = await membersOf(db, teamId);
+  // Private calendars: someone the viewer isn't allowed for is left out entirely (not even shown as busy).
+  const hidden = await hiddenFromViewer(db, actorId, all.map((m) => m.userId));
+  const members = all.filter((m) => !hidden.has(m.userId));
   return Promise.all(
     members.map(async (m): Promise<MemberAvailability> => {
       const flags = { calendarUnavailable: false };

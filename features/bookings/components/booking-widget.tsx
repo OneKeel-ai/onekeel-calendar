@@ -32,7 +32,7 @@ import {
 import { BookingDetails } from "./booking-details";
 import { BookingForm, type BookingFormConfig } from "./booking-form";
 import { LayoutSwitcher, useNarrowScreen } from "./layout-switcher";
-import { OfferLinkInvalid } from "./offer-link";
+import { InvitationOnly, OfferLinkInvalid, RESTRICTED_GONE_MESSAGE, sentTimesGone } from "./offer-link";
 import { MonthCalendar } from "./month-calendar";
 import { WeekCalendar } from "./week-calendar";
 
@@ -41,6 +41,8 @@ export type BookingWidgetProps = {
   title: string;
   /** People the link's offer invites; shown read-only. */
   alsoAttending?: readonly string[];
+  /** The link only lets the client book the times that were sent (epoch ms starts). */
+  restricted?: { offered: readonly number[] };
   hostName: string;
   description: string | null;
   durations: number[];
@@ -110,6 +112,8 @@ export function BookingWidget(props: BookingWidgetProps) {
   const [slotNotice, setSlotNotice] = useState<number | null>(null);
   /** The booking was refused because the link's offer is gone: fail closed, like the page does. */
   const [offerInvalid, setOfferInvalid] = useState(false);
+  /** The booking was refused because the host's pages are by invitation only. */
+  const [invitationOnly, setInvitationOnly] = useState(false);
   const pendingSlot = useRef<number | null>(null);
   const holdToken = useRef("");
   const requestSeq = useRef(0);
@@ -193,8 +197,10 @@ export function BookingWidget(props: BookingWidgetProps) {
       if (seq !== requestSeq.current) return; // a newer range/zone/duration was requested meanwhile
       setSlots(data.slots);
       setLoadedKey(key);
+      // A private host's page without a usable link: only the invitation message, like the page itself.
+      if (data.unavailable === "invitation_only") setInvitationOnly(true);
       // The host's calendar can't be checked: say so instead of showing an unexplained empty list.
-      if (data.unavailable) setLoadError(data.message ?? "Online booking is temporarily unavailable. Please contact the host directly.");
+      else if (data.unavailable) setLoadError(data.message ?? "Online booking is temporarily unavailable. Please contact the host directly.");
     } catch {
       if (seq === requestSeq.current) setLoadError("Couldn't load available times. Please try again.");
     } finally {
@@ -223,6 +229,8 @@ export function BookingWidget(props: BookingWidgetProps) {
           holdToken: holdToken.current,
           link: form.link,
           ...(form.offer && { offer: form.offer }),
+          // Moving a booking: the server applies that booking's own offer and privacy rules.
+          ...(form.reschedule && { reschedule: { uid: form.reschedule.uid, token: form.reschedule.token } }),
         });
         if (!held.ok) {
           setSelectedSlot(null);
@@ -261,6 +269,7 @@ export function BookingWidget(props: BookingWidgetProps) {
     <BookingDetails
       title={props.title}
       alsoAttending={props.alsoAttending}
+      restricted={props.restricted !== undefined}
       hostName={props.hostName}
       description={props.description}
       durations={props.durations}
@@ -302,9 +311,15 @@ export function BookingWidget(props: BookingWidgetProps) {
   }
 
   if (offerInvalid) return <OfferLinkInvalid />;
+  if (invitationOnly) return <InvitationOnly />;
 
   const today = localDateOf(nowMs, timeZone);
   const busy = loading || loadedKey !== requestKey;
+  // A link limited to the times that were sent, none of which can still be booked.
+  const goneNotice =
+    !busy && !loadError && sentTimesGone({ restricted: props.restricted !== undefined, offered: props.restricted?.offered ?? [], shown: slots.length, range: rangeWindow(range, timeZone, nowMs), now: nowMs })
+      ? RESTRICTED_GONE_MESSAGE
+      : null;
 
   const changeLayout = (next: BookingLayout) => {
     if (next === layout) return;
@@ -352,6 +367,7 @@ export function BookingWidget(props: BookingWidgetProps) {
               tokens={() => ({ hold: holdToken.current, idempotencyKey: idempotencyKey.current })}
               onBack={() => setSelectedSlot(null)}
               onOfferInvalid={() => setOfferInvalid(true)}
+              onInvitationOnly={() => setInvitationOnly(true)}
               onTaken={() => {
                 setSelectedSlot(null);
                 void load();
@@ -379,6 +395,7 @@ export function BookingWidget(props: BookingWidgetProps) {
                   busy={busy}
                   loading={loading}
                   loadError={loadError}
+                  emptyMessage={goneNotice ?? undefined}
                   seated={props.seated}
                   preferences={preferences}
                   onChangeWeek={(delta) => {
@@ -402,6 +419,7 @@ export function BookingWidget(props: BookingWidgetProps) {
                   loading={loading}
                   loadError={loadError}
                   empty={slots.length === 0}
+                  emptyMessage={goneNotice ?? undefined}
                   seated={props.seated}
                   stacked={shown === "column"}
                   nowMs={nowMs}

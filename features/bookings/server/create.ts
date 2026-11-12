@@ -4,7 +4,8 @@ import { attendee, booking, bookingHost, eventTypeHost, membership, privateLink,
 import { isManualSlotAvailable, isSlotAvailable, selectRoundRobinHost } from "@/lib/availability";
 import type { HostInput, SameTypeBooking } from "@/lib/availability/types";
 import { hashToken, newId, randomToken, tokenMatches } from "@/lib/ids";
-import { findManualSlot, loadOffer, MAX_BOOKING_TITLE, mergeOfferGuests, type OfferView } from "@/features/offers/server/service";
+import { findManualSlot, loadOffer, MAX_BOOKING_TITLE, mergeOfferGuests, offerAllows, type OfferView } from "@/features/offers/server/service";
+import { bookingNeedsOffer } from "@/features/privacy/server/guard";
 import { durationsOf, type EventTypeView, type PublicHost, toEngineEvent } from "@/features/event-types/server/service";
 import { type ScheduleView, scheduleForEventType, toScheduleInput } from "@/features/schedules/server/service";
 import { bookingTitle } from "../event-name";
@@ -371,6 +372,8 @@ export async function createBooking(db: Database, input: CreateBookingInput): Pr
     if (dup) throw new BookingFailure("DUPLICATE", dup.uid);
   }
   assertPlausibleStart(input.start, input.now);
+  // Private calendar: by invitation only. Checked before any calendar is read, and again under the locks.
+  if (!input.reschedule && !input.offer && (await bookingNeedsOffer(db, et.id))) throw new BookingFailure("OFFER_REQUIRED");
   const plans = input.hosts ?? [{ host: input.host, fixed: true, weight: 100, priority: 2, scheduleId: et.scheduleId }];
   const manualRequested = await manualSlotRequested(db, input);
   const { loaded, occurrences } = await loadPlans(db, input, plans, (tz) => planOccurrences(input, tz), manualRequested);
@@ -382,6 +385,13 @@ export async function createBooking(db: Database, input: CreateBookingInput): Pr
       const linkId = await consumeLink(tx, input);
       const previous = input.reschedule ? await loadReschedulable(tx, input) : undefined;
       const offer = await offerFor(tx, input, previous);
+      // Also when moving a booking: without a valid offer nothing of a private calendar is bookable.
+      if (!offer && (await bookingNeedsOffer(tx, et.id))) throw new BookingFailure("OFFER_REQUIRED");
+      if (offer?.restricted) {
+        // Only the times on the card (a reschedule keeps the moved booking's offer, so its other times).
+        if (occurrences.length > 1) throw new BookingFailure("INVALID_RECURRENCE");
+        if (!offerAllows(offer, input.start, input.durationMin)) throw new BookingFailure("SLOT_UNAVAILABLE", "not_offered");
+      }
       // The calendars were skipped only for a time added by hand: the offer actually used must have it.
       if (manualRequested && !findManualSlot(offer, input.start, input.durationMin, soleHostId(input))) throw new BookingFailure("SLOT_UNAVAILABLE", "not_offered");
       const assignment = await assign(tx, input, loaded, occurrences, previous?.uid, manualRequested);

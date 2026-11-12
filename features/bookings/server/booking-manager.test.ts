@@ -15,11 +15,20 @@ describe("isBookingManager (assistant booking management)", () => {
     expect(q.sql).toContain("INNER JOIN membership m ON m.team_id = et.team_id");
     expect(q.sql).toContain("et.id = \"booking\".\"event_type_id\"");
     expect(q.sql).toContain("m.role IN ('owner', 'admin')");
-    expect(q.sql).toMatch(/^\(EXISTS [\s\S]* OR EXISTS [\s\S]*\)$/);
+    expect(q.sql).toMatch(/^\(EXISTS [\s\S]* OR \(EXISTS [\s\S]* AND NOT EXISTS [\s\S]*\)\)$/);
     // Plain members and personal event types (team_id NULL) never qualify via the team branch.
     expect(q.sql).toContain("et.team_id IS NOT NULL");
     expect(q.sql).not.toContain("'member'");
-    expect(q.params).toEqual(["julie", "julie"]);
+    expect(q.params).toEqual(["julie", "julie", "julie", "julie"]);
+  });
+
+  it("keeps a team admin away from a private host's bookings unless allowed for them", () => {
+    const q = render(isBookingManager("julie"));
+    expect(q.sql).toContain("INNER JOIN calendar_guard g ON g.email = lower(gu.email)");
+    expect(q.sql).toContain("gu.id = \"booking\".\"organizer_id\"");
+    expect(q.sql).toContain("g.delegates @> to_jsonb(");
+    // Only the team branch is narrowed: the host check comes first and stands alone.
+    expect(q.sql.indexOf("calendar_guard")).toBeGreaterThan(q.sql.indexOf("m.role IN"));
   });
 
   it("leaves isHostOf narrow (busy time and own-event matching stay per actual host)", () => {

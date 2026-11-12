@@ -24,6 +24,8 @@ type Props = {
   loading: boolean;
   loadError: string | null;
   empty: boolean;
+  /** Replaces the usual "No times available this month" line. */
+  emptyMessage?: string;
   seated: boolean;
   /** Column layout: times below the calendar at every width. */
   stacked: boolean;
@@ -128,7 +130,9 @@ export function MonthCalendar(props: Props) {
           </Alert>
         )}
         {!props.loading && !props.loadError && props.empty && (
-          <p className="mt-3 text-sm text-muted-foreground">No times available this month. Try the next month.</p>
+          <p className="mt-3 text-sm text-muted-foreground" role={props.emptyMessage ? "status" : undefined}>
+            {props.emptyMessage ?? "No times available this month. Try the next month."}
+          </p>
         )}
         {props.preferences}
       </section>

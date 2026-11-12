@@ -5,7 +5,8 @@ import { computeSlots, computeTeamSlots, isManualSlotAvailable, isSlotAvailable,
 import type { HostInput, Interval, Slot } from "@/lib/availability/types";
 import { hashToken, newId, tokenMatches } from "@/lib/ids";
 import { durationsOf, type EventTypeView, type PublicHost, toEngineEvent } from "@/features/event-types/server/service";
-import { findManualSlot, loadOffer, type ManualSlot } from "@/features/offers/server/service";
+import { findManualSlot, loadOffer, type ManualSlot, offerAllows } from "@/features/offers/server/service";
+import { bookingNeedsOffer } from "@/features/privacy/server/guard";
 import { type ScheduleView, scheduleForEventType, toScheduleInput } from "@/features/schedules/server/service";
 import { ACTIVE, assertPlausibleStart, BookingFailure, type AttendeeRow, type BookingRow, deactivate, type ExternalBusyFn, HOLD_TTL_MS, isBookingManager, MIN, validationWindow, withExternal } from "./core";
 import { canRequestReschedule } from "../reschedulable";
@@ -189,6 +190,11 @@ export const MAX_ACTIVE_HOLDS_PER_HOST = 25;
  * Only a slot the engine would offer can be held, and a host can't have more than
  * MAX_ACTIVE_HOLDS_PER_HOST live holds, so holds can't be used to block a calendar.
  */
+/** A booking that can still be moved with its manage token: active, not started, not part of a series. */
+export function isMovableBooking(b: { status: string; startAt: Date; recurringSeriesId: string | null }, now: number): boolean {
+  return (ACTIVE as readonly string[]).includes(b.status) && b.startAt.getTime() > now && !b.recurringSeriesId;
+}
+
 export async function holdSlot(
   db: Database,
   input: {
@@ -204,6 +210,11 @@ export async function holdSlot(
      * host's hours or calendars say otherwise. Unknown or for another event type: OFFER_INVALID.
      */
     offer?: string;
+    /**
+     * The caller verified a reschedule with the booking's manage token (and passes that booking's
+     * offer as `offer`): a private host's booking made before their calendar went private may move.
+     */
+    rescheduling?: boolean;
   },
 ): Promise<void> {
   if (!durationsOf(input.eventType).includes(input.durationMin)) throw new BookingFailure("INVALID_DURATION");
@@ -214,7 +225,12 @@ export async function holdSlot(
   if (input.offer) {
     const offer = await loadOffer(db, input.offer, input.eventType.id);
     if (!offer || input.eventType.seatsPerSlot) throw new BookingFailure("OFFER_INVALID");
+    // Only the times on the card, when the sender limited the client to those.
+    if (!offerAllows(offer, input.start, input.durationMin)) throw new BookingFailure("SLOT_UNAVAILABLE", "not_offered");
     manual = Boolean(findManualSlot(offer, input.start, input.durationMin, input.host.id));
+  } else if (await bookingNeedsOffer(db, input.eventType.id)) {
+    // Private calendar: by invitation only, also when moving a booking that has no valid offer.
+    throw new BookingFailure("OFFER_REQUIRED");
   }
   const sched = await scheduleForEventType(db, input.host.id, input.eventType.scheduleId);
   if (!sched) throw new BookingFailure("NO_SCHEDULE");

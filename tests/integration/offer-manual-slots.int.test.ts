@@ -84,6 +84,8 @@ describe("saving times added by hand", () => {
         { start: MON("19:00"), duration: 60 },
       ],
       manualHostId: "ada",
+      restricted: false,
+      offeredSlots: [],
     });
   });
 

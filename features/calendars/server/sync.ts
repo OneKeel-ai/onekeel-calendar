@@ -1,4 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
+import { blockedCalendarAddressesFor, isBlockedCalendar } from "@/features/privacy/server/guard";
 import { booking, bookingReference, connectedCalendar, credential, destinationCalendar, eventType } from "@/db/schema";
 import { coHosts } from "@/features/bookings/server/notifications";
 import { type BookingDetails, findBookingById } from "@/features/bookings/server/service";
@@ -45,7 +46,10 @@ async function destinationFor(deps: IntegrationDeps, details: BookingDetails): P
     .from(connectedCalendar)
     .innerJoin(credential, eq(credential.id, connectedCalendar.credentialId))
     .where(and(eq(connectedCalendar.id, id), eq(connectedCalendar.userId, details.host.id)));
-  return row && !row.readOnly && !row.invalidAt ? row : null;
+  if (!row || row.readOnly || row.invalidAt) return null;
+  // Private calendars: never written into someone's private calendar for a host not allowed for them.
+  if (isBlockedCalendar(await blockedCalendarAddressesFor(deps.db, details.host.id), row.externalId)) return null;
+  return row;
 }
 
 function eventInput(details: BookingDetails, appHost: string, meetingUrl?: string): CalendarEventInput {

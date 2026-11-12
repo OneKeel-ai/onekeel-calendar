@@ -20,6 +20,8 @@ export type ScheduleType = {
     /** How many such other calendars (always filled, also for other hosts). */
     otherCount: number;
   };
+  /** The host keeps their calendar private. `allowed`: display labels (name, else email) of everyone who may schedule for them, including the host. */
+  privateHost?: { allowed: string[] };
 };
 
 /**

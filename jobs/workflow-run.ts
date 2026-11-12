@@ -3,6 +3,7 @@ import type { Database } from "@/db/client";
 import { workflow } from "@/db/schema";
 import { answerList, manageUrl } from "@/features/bookings/server/notifications";
 import { type BookingDetails, findBookingById } from "@/features/bookings/server/service";
+import { guardsOfUsers, isAllowedFor } from "@/features/privacy/server/guard";
 import { renderSubject, renderTemplate, type TemplateContext } from "@/features/workflows/render";
 import { prefers12Hour } from "@/lib/format";
 import { stableJobId } from "@/lib/jobs/job-id";
@@ -122,6 +123,16 @@ export function createWorkflowRunHandler(deps: WorkflowRunDeps) {
         answers: answerList(details),
       };
       const links = await linksFor(deps, details);
+      // Private calendars: a fixed address is outside the meeting, so it only gets the details when
+      // every private host allows that address (their own or one of the people they named).
+      if (row.recipient === "address") {
+        const hostIds = (details.hosts?.length ? details.hosts : [details.host]).map((h) => h.id);
+        const guards = await guardsOfUsers(deps.db, hostIds);
+        if ([...guards.values()].some((g) => !isAllowedFor(g, row.address))) {
+          logger.info("workflow.skipped_private", { jobId: job.id });
+          continue;
+        }
+      }
       for (const r of recipientsFor(row, details, links)) {
         const prefs = { locale: r.locale, timeZone: r.timeZone, hour12: r.hour12 };
         const mine = { ...ctx, ...r.ctx };

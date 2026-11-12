@@ -21,7 +21,9 @@ export type TeamErrorCode =
   | "MEMBER_NOT_FOUND"
   | "NOT_A_HOST"
   | "EMAIL_NOT_VERIFIED"
-  | "RATE_LIMITED";
+  | "RATE_LIMITED"
+  /** Private calendars: detail "invitee" (the invitee keeps theirs private) or "member" (someone in the team does). */
+  | "PRIVATE_CALENDAR";
 
 export class TeamError extends Error {
   constructor(

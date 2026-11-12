@@ -7,6 +7,7 @@ import { eventTypeTarget } from "@/features/embed/targets";
 import { type SetupFacts, buildSteps, calendarStatus } from "../status";
 import type { SchedulingPrincipal } from "../types";
 import { loadConflictNotes } from "./conflict-notes";
+import { loadPrivateHosts } from "./private-hosts";
 import { loadTeamPrincipalsWithHosts, SELF_PRINCIPAL_ID } from "./principals";
 
 /** Everything /setup and /schedule need, read live from the same tables the settings pages write. */
@@ -42,18 +43,21 @@ export async function loadSetup(db: Database, user: { id: string; name: string; 
     ...teamPrincipals,
   ];
   // Which calendars hide each type's free time (one batch for every listed type and its host).
-  const notes = await loadConflictNotes(db, user.id, [
+  const items = [
     ...emailTypes.map((t) => ({ eventTypeId: t.id, hostId: user.id })),
     ...teamPrincipals.flatMap((p) => p.types.flatMap((t) => {
       const hostId = team.hostOf.get(t.id);
       return hostId ? [{ eventTypeId: t.id, hostId }] : [];
     })),
-  ]);
+  ];
+  const hostOfType = new Map(items.map((i) => [i.eventTypeId, i.hostId]));
+  const [notes, privateHosts] = await Promise.all([loadConflictNotes(db, user.id, items), loadPrivateHosts(db, items.map((i) => i.hostId))]);
   const principals: SchedulingPrincipal[] = listed.map((p) => ({
     ...p,
     types: p.types.map((t) => {
       const note = notes.get(t.id);
-      return note ? { ...t, conflictNote: note } : t;
+      const privateHost = privateHosts.get(hostOfType.get(t.id) ?? "");
+      return { ...t, ...(note && { conflictNote: note }), ...(privateHost && { privateHost }) };
     }),
   }));
   return { facts, steps: buildSteps(facts), calendar: calendarStatus(connections), emailTypes, principals, username };

@@ -35,9 +35,14 @@ const MESSAGES: Record<TeamError["code"], ActionState> = {
   NOT_A_HOST: { status: "error", message: "Hosts must be members of the team." },
   EMAIL_NOT_VERIFIED: { status: "error", message: "Verify your email address first." },
   RATE_LIMITED: { status: "error", message: "Too many invitations. Please wait a while, or cancel pending ones first." },
+  PRIVATE_CALENDAR: { status: "error", message: "This team includes someone who keeps their calendar private. Only the people they chose can join." },
 };
 
 const message = (error: TeamError): ActionState => {
+  // Never names the private person's delegates: only who is private, and only for the invitee case.
+  if (error.code === "PRIVATE_CALENDAR" && error.detail === "invitee") {
+    return { status: "error", message: "This person keeps their calendar private. They can only be in a team with the people they chose." };
+  }
   if (error.code === "FORBIDDEN" && error.detail === "has_upcoming_bookings") {
     return { status: "error", message: "There are upcoming bookings. Turn it off instead, or cancel those bookings first." };
   }

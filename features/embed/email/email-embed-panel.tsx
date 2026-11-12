@@ -13,13 +13,15 @@ import { addDays, formatDate, isValidTimeZone, type LocalDate, localDateOf } fro
 import { formatDuration, prefers12Hour } from "@/lib/format";
 import { useTimeZones } from "@/lib/use-time-zones";
 import type { EmbedTarget } from "../target";
+import { flagStorage, readShowAllTimes, writeShowAllTimes } from "./all-times";
+import { AllTimesSwitch } from "./all-times-fields";
 import { EmailCopyActions } from "./email-copy-actions";
 import { EmailEmbedError, emailPreviewDocument, MAX_EMAIL_SLOTS, renderEmailEmbed } from "./email-html";
 import { CalendarOverlay } from "./calendar-overlay";
 import { MANUAL_HOURS, manualChoices, manualPicks, manualSlotsInput, NO_PICKS, type PickState, slotGrid, togglePick } from "./manual-times";
 import { ManualTimesNotice, ManualTimesSwitch } from "./manual-times-fields";
 import { EmailSlotPicker } from "./email-slot-picker";
-import { type CopyGate, copyGate, type MeetingDetailsValue } from "./meeting-details";
+import { type CopyGate, copyGate, type MeetingDetailsValue, offeredSlotsInput, type OfferRules, OPEN_RULES } from "./meeting-details";
 import { MeetingDetails, OfferSaveStatus } from "./meeting-details-fields";
 import { busyDuring, displayHours, type LoadBusy, shownPeople, toggleViewed, weekWindow } from "./planner";
 import { dayKey, groupByDay } from "./selection";
@@ -55,6 +57,11 @@ export type EmailOfferOptions = {
    * in the offer so its links can book them. Only for single-host, non-seated meeting types.
    */
   manualTimes?: boolean;
+  /**
+   * The host keeps their calendar private: every link needs a saved offer, and the switch that
+   * shows clients all open times warns before exposing them.
+   */
+  privateHost?: boolean;
 };
 
 type Env = { appUrl: string; timeZone: string; locale: string; hour12: boolean; now: number };
@@ -141,11 +148,21 @@ function EmailEmbedEditor({
   const [plannerOpen, setPlannerOpen] = useState(Boolean(planner?.loadBusy));
   const [viewed, setViewed] = useState<readonly string[]>([]);
   const [note, setNote] = useState("");
+  // "Let the client see all available times": off by default, remembered per browser (read after mount).
+  // Only with an offer (Email times); the embed dialog keeps the link as before.
+  const [showAll, setShowAll] = useState(false);
   const timeZones = useTimeZones();
   const details = offer?.value;
-  const offerSave = useOfferSave(offer?.eventTypeId ?? "", details ?? { title: "", guests: [] }, manualSlots);
-  // Links must carry exactly the title, people and hand-added times on screen: no copying until those are saved.
-  const gate: CopyGate = offer && details ? copyGate(offer.eventTypeId, details, offerSave.save, manualSlots) : { canCopy: true };
+  const hasOffer = Boolean(offer);
+  const privateHost = Boolean(offer?.privateHost);
+  const rules = useMemo<OfferRules>(
+    () => (hasOffer ? { onlyOffered: !showAll, slots: showAll ? [] : offeredSlotsInput(selected, duration), privateHost } : OPEN_RULES),
+    [hasOffer, showAll, selected, duration, privateHost],
+  );
+  const offerSave = useOfferSave(offer?.eventTypeId ?? "", details ?? { title: "", guests: [] }, manualSlots, rules);
+  // Links must carry exactly the title, people, hand-added times and who may book shown on screen:
+  // no copying until those are saved.
+  const gate: CopyGate = offer && details ? copyGate(offer.eventTypeId, details, offerSave.save, manualSlots, rules) : { canCopy: true };
   const fieldErrors = !gate.canCopy && gate.status === "error" && offerSave.save.status === "error" ? offerSave.save.fieldErrors : undefined;
   const offerId = gate.canCopy ? gate.offerId : undefined;
   const customTitle = details?.title.trim() || undefined;
@@ -157,6 +174,7 @@ function EmailEmbedEditor({
     setTimeZone(next.timeZone);
     setHour12(next.hour12);
     setWeekStart(localDateOf(next.now, next.timeZone));
+    setShowAll(readShowAllTimes(flagStorage()));
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [appUrl]);
 
@@ -224,12 +242,13 @@ function EmailEmbedEditor({
         maxSlots: MAX_EMAIL_SLOTS,
         title: customTitle,
         offer: offerId,
+        showAllTimes: hasOffer ? showAll : true,
       });
     } catch (error) {
       if (error instanceof EmailEmbedError) return { error: error.message };
       throw error;
     }
-  }, [env, target, duration, timeZone, hour12, selected, note, customTitle, offerId]);
+  }, [env, target, duration, timeZone, hour12, selected, note, customTitle, offerId, hasOffer, showAll]);
 
   const busyNames = useCallback((slot: string) => busyDuring(slot, duration, viewedPeople), [duration, viewedPeople]);
 
@@ -268,6 +287,10 @@ function EmailEmbedEditor({
   const changeManual = (on: boolean) => {
     setManualOn(on);
     setClock(Date.now());
+  };
+  const changeShowAll = (on: boolean) => {
+    setShowAll(on);
+    writeShowAllTimes(flagStorage(), on);
   };
   const toggleFree = (slot: string) => setPicks((prev) => togglePick(prev, slot, MAX_EMAIL_SLOTS));
   const toggleHand = (slot: string) => setPicks((prev) => togglePick(prev, slot, MAX_EMAIL_SLOTS, true));
@@ -390,6 +413,15 @@ function EmailEmbedEditor({
             sandbox=""
             srcDoc={emailPreviewDocument(html)}
             className="h-96 w-full rounded-md border border-border bg-white"
+          />
+        )}
+        {offer && (
+          <AllTimesSwitch
+            on={showAll}
+            onChange={changeShowAll}
+            hostLabel={planner?.hostLabel ?? "the host"}
+            privateHost={privateHost}
+            error={fieldErrors?.slots}
           />
         )}
         {offer && <OfferSaveStatus gate={gate} onRetry={offerSave.retry} />}

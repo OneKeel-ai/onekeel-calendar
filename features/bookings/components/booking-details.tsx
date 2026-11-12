@@ -1,18 +1,20 @@
 "use client";
 
-import { Clock, MapPin, Repeat, Users } from "lucide-react";
+import { CalendarCheck, Clock, MapPin, Repeat, Users } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { type FormatPrefs, formatDateLong, formatDuration, formatTime } from "@/lib/format";
 import { Markdown } from "@/lib/markdown";
 import type { BookingFormConfig } from "./booking-form";
-import { alsoAttendingLine } from "./offer-link";
+import { alsoAttendingLine, RESTRICTED_OFFER_LINE } from "./offer-link";
 
 type Props = {
   title: string;
   /** People an Email times link invites (read-only). */
   alsoAttending?: readonly string[];
+  /** The link only lets the client book the times that were sent. */
+  restricted?: boolean;
   hostName: string;
   description: string | null;
   durations: number[];
@@ -61,6 +63,11 @@ export function BookingDetails(props: Props) {
       {attending && (
         <p className="flex items-start gap-2 text-sm break-all text-muted-foreground" data-testid="also-attending">
           <Users className="mt-0.5 size-4 shrink-0" aria-hidden /> {attending}
+        </p>
+      )}
+      {props.restricted && (
+        <p className="flex items-start gap-2 text-sm text-muted-foreground" data-testid="restricted-offer">
+          <CalendarCheck className="mt-0.5 size-4 shrink-0" aria-hidden /> {RESTRICTED_OFFER_LINE}
         </p>
       )}
       {ready && props.seated && (

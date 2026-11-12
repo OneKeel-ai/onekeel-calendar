@@ -6,6 +6,7 @@ import { columns, type EventTypeView, loadEventTypeViews, type PublicHost, write
 import { newId } from "@/lib/ids";
 import { lockedValues, templateForm } from "../managed";
 import type { HostForm, SchedulingType } from "../schemas";
+import { eventTypesNeedingOffer, hiddenFromViewer } from "@/features/privacy/server/guard";
 import { requireTeamRole, TeamError } from "./access";
 
 /**
@@ -123,6 +124,14 @@ async function assertMembers(tx: Database | Tx, teamId: string, userIds: string[
   if (rows.length !== new Set(userIds).size) throw new TeamError("NOT_A_HOST");
 }
 
+/**
+ * Private calendars (defense in depth; the team invariant already keeps such people apart): an
+ * admin can't make someone a host, or give them a managed copy, unless allowed for them.
+ */
+async function assertMayAssign(tx: Database | Tx, actorId: string, userIds: string[]) {
+  if ((await hiddenFromViewer(tx, actorId, userIds)).size) throw new TeamError("PRIVATE_CALENDAR", "member");
+}
+
 /** Default host settings for a member added without explicit ones (assign-all, joining later). */
 const defaultHost = (userId: string, collective: boolean): HostForm => ({ userId, isFixed: collective, weight: 100, priority: 2 });
 
@@ -153,6 +162,7 @@ export async function setHosts(
     // Collective: everyone attends, so every host is fixed.
     const hosts = chosen.map((h) => (collective ? { ...h, isFixed: true } : h));
     await assertMembers(tx, teamId, hosts.map((h) => h.userId));
+    await assertMayAssign(tx, actorId, hosts.map((h) => h.userId));
     await tx.delete(eventTypeHost).where(eq(eventTypeHost.eventTypeId, id));
     if (hosts.length) await tx.insert(eventTypeHost).values(hosts.map((h, position) => ({ ...h, eventTypeId: id, position })));
     await tx
@@ -231,6 +241,7 @@ export async function setManaged(
   try {
     await db.transaction(async (tx) => {
       await assertMembers(tx, teamId, assignees);
+      await assertMayAssign(tx, actorId, assignees);
       await tx.update(eventType).set({ lockedFields: [...new Set(input.lockedFields)] }).where(eq(eventType.id, id));
       const template = await templateView(tx, id);
       const children = await tx.select({ id: eventType.id, owner: eventType.ownerUserId }).from(eventType).where(eq(eventType.parentId, id));
@@ -295,7 +306,9 @@ export async function listPublicTeamEventTypes(db: Database, teamId: string): Pr
     .from(eventType)
     .where(and(eq(eventType.teamId, teamId), eq(eventType.enabled, true), eq(eventType.hidden, false), ne(eventType.schedulingType, "managed")))
     .orderBy(asc(eventType.position), asc(eventType.createdAt));
-  return loadEventTypeViews(db, rows);
+  // Private calendars: types that need an emailed offer are never listed publicly.
+  const needOffer = await eventTypesNeedingOffer(db, rows.map((r) => r.id));
+  return loadEventTypeViews(db, rows.filter((r) => !needOffer.has(r.id)));
 }
 
 export type PublicTeamHost = { host: PublicHost; isFixed: boolean; weight: number; priority: number; scheduleId: string | null };

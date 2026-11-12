@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { getDb } from "@/db/client";
 import { ExecutiveSetupSteps } from "@/features/setup/components/executive-setup";
 import { SetupChecklist } from "@/features/setup/components/setup-checklist";
+import { joinNames } from "@/features/privacy/components/wording";
+import { getGuardView } from "@/features/privacy/server/guard";
 import { loadSetup } from "@/features/setup/server/load";
 import { requireUser } from "@/lib/auth/session";
 
@@ -18,6 +20,9 @@ const P = "text-[13px] leading-5 text-muted-foreground";
 export default async function SetupPage() {
   const user = await requireUser();
   const { steps, calendar } = await loadSetup(getDb(), user);
+  // Shown on the first screen after sign-in, so someone whose calendar was made private in
+  // advance sees exactly who was named and can change it before connecting anything.
+  const guard = await getGuardView(getDb(), user.email);
   const left = steps.filter((s) => s.state !== "done").length;
 
   return (
@@ -34,6 +39,21 @@ export default async function SetupPage() {
           Zoom for that. Connect your own calendar only if you want to see your own busy time there.
         </p>
       </header>
+
+      {guard && (
+        <div data-testid="setup-private-calendar" className="flex flex-col gap-1 rounded-md border border-border bg-muted/40 px-3 py-2 text-[13px] leading-5">
+          <p className="font-medium text-foreground">Your calendar is private.</p>
+          <p className="text-muted-foreground">
+            {guard.delegates.length
+              ? `Only you and ${joinNames(guard.delegates)} can see your free and busy time or schedule for you.`
+              : "Only you can see your free and busy time or schedule for yourself."}{" "}
+            Nobody else can, including other team admins. You control this list.{" "}
+            <Link href="/settings/privacy" className="font-medium text-foreground underline underline-offset-2">
+              Review Calendar privacy
+            </Link>
+          </p>
+        </div>
+      )}
 
       {!calendar.healthy && (
         <Alert variant="destructive" className="border-destructive/40 bg-destructive/10">

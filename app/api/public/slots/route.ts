@@ -1,10 +1,11 @@
 import { getDb } from "@/db/client";
 import { slotsQuerySchema } from "@/features/bookings/schemas";
-import { BookingFailure, findBookingForManage, getAvailableSlots, getManualOfferSlots, getTeamSlots, withManualSlots } from "@/features/bookings/server/service";
+import { BookingFailure, findBookingForManage, getAvailableSlots, getManualOfferSlots, getTeamSlots, isMovableBooking, withManualSlots } from "@/features/bookings/server/service";
 import { cachedExternalBusyFor, calendarWritableFor } from "@/features/calendars/server/runtime";
 import { publicBookingContext } from "@/features/bookings/server/public-context";
 import { isUsablePrivateLink } from "@/features/event-types/server/private-links";
-import { loadOffer } from "@/features/offers/server/service";
+import { loadOffer, offerAllows } from "@/features/offers/server/service";
+import { allowedForEventTypeHosts, anyPrivate, bookingNeedsOffer } from "@/features/privacy/server/guard";
 import { slotLatency } from "@/lib/metrics";
 import { clientIp, overLocalLimit } from "@/lib/security/public-limits";
 
@@ -27,6 +28,16 @@ async function handle(request: Request, input: unknown) {
   }
 }
 
+/** The signed-in user, if any. Loaded lazily: the public route needs no session otherwise. Any failure means nobody. */
+async function signedInUserId(): Promise<string | null> {
+  try {
+    const { getSession } = await import("@/lib/auth/session");
+    return (await getSession())?.user.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function compute(request: Request, input: unknown) {
   if (overLocalLimit("slots", clientIp(request.headers))) return json({ error: "Too many requests" }, 429);
   const parsed = slotsQuerySchema.safeParse(input);
@@ -36,12 +47,15 @@ async function compute(request: Request, input: unknown) {
   const context = await publicBookingContext({ username: q.username, team: q.team, slug: q.slug });
   if (!context) return json({ error: "Not found" }, 404);
   const { target, host, eventType, schedule } = context;
+  // Group links with someone who keeps their calendar private don't exist (read live: the context is cached).
+  if (target.kind === "group" && (await anyPrivate(db, (target.hosts ?? []).map((h) => h.host.id)))) return json({ error: "Not found" }, 404);
   // The booking being moved only stops counting as busy for someone holding its manage token.
   let rescheduleUid: string | undefined;
   let offerId = q.offer;
   if (q.reschedule && q.token) {
     const manage = await findBookingForManage(db, q.reschedule, q.token);
-    if (manage?.canManage && manage.booking.eventTypeId === eventType.id) {
+    // Only a booking that can still be moved: a cancelled, rejected or past booking's link opens nothing.
+    if (manage?.canManage && manage.booking.eventTypeId === eventType.id && isMovableBooking(manage.booking, Date.now())) {
       rescheduleUid = q.reschedule;
       // Moving a booking made from an offer: that offer's times added by hand (never the URL's).
       offerId = manage.booking.offerId ?? undefined;
@@ -52,21 +66,34 @@ async function compute(request: Request, input: unknown) {
   if (eventType.linkOnly && !rescheduleUid && !(await isUsablePrivateLink(db, eventType.id, q.link, Date.now()))) {
     return json({ error: "Not found" }, 404);
   }
+  const offer = offerId ? await loadOffer(db, offerId, eventType.id) : null;
+  // Private calendar: by invitation only. Without a valid offer for this event type no free time is
+  // computed or shown, also when moving a booking. The one exception is the signed-in host or one of
+  // the people they named, picking times on Email times. Checked live, not cached.
+  if (!offer && (await bookingNeedsOffer(db, eventType.id))) {
+    const viewerId = await signedInUserId();
+    if (!viewerId || !(await allowedForEventTypeHosts(db, viewerId, eventType.id))) {
+      return json({ slots: [], unavailable: "invitation_only", message: "This meeting is by invitation. Ask your contact for times." });
+    }
+  }
+  // A restricted offer: only the times on the card (that are still available) are listed.
+  const offered = <T extends { start: number }>(list: readonly T[]): T[] => (offer?.restricted ? list.filter((s) => offerAllows(offer, s.start, q.duration)) : [...list]);
   const slotRequest = { eventType, durationMin: q.duration, window: { start: q.start, end: q.end }, now: Date.now(), rescheduleUid, ownHoldToken: q.hold, displayCache: true };
   // Times added by hand to a valid offer for this event type with one host. They don't need the
   // host's calendars read, so they stay listed when a required calendar can't be checked.
   let manual: Awaited<ReturnType<typeof getManualOfferSlots>> = [];
   const singleHost = target.hosts ? (target.hosts.length === 1 ? target.hosts[0].host : null) : host;
-  if (offerId && singleHost) {
-    const offer = await loadOffer(db, offerId, eventType.id);
-    // Only for the host they were saved for: a later change of host doesn't carry them over.
-    if (offer?.manualSlots.length && offer.manualHostId === singleHost.id) manual = await getManualOfferSlots(db, { ...slotRequest, host: singleHost, manualSlots: offer.manualSlots });
+  // Only for the host they were saved for: a later change of host doesn't carry them over.
+  if (offer && singleHost && offer.manualSlots.length && offer.manualHostId === singleHost.id) {
+    manual = offered(await getManualOfferSlots(db, { ...slotRequest, host: singleHost, manualSlots: offer.manualSlots }));
   }
+  // A restricted offer whose times are all past or unreadable lists nothing, without reading any calendar.
+  if (offer?.restricted && !offer.offeredSlots.some((s) => s.duration === q.duration && s.start > Date.now())) return json({ slots: [] });
   try {
     const slots = target.hosts
       ? await getTeamSlots(db, { ...slotRequest, hosts: target.hosts, externalBusyFor: (hostId) => cachedExternalBusyFor(target.hosts!.find((h) => h.host.id === hostId)!.host, eventType.id) })
       : await getAvailableSlots(db, { ...slotRequest, host, externalBusy: cachedExternalBusyFor(host, eventType.id), schedule });
-    return json({ slots: withManualSlots(slots, manual).map((s) => ({ start: s.start, end: s.end, ...(s.seatsRemaining !== undefined && { seats: s.seatsRemaining }) })) });
+    return json({ slots: offered(withManualSlots(slots, manual)).map((s) => ({ start: s.start, end: s.end, ...(s.seatsRemaining !== undefined && { seats: s.seatsRemaining }) })) });
   } catch (error) {
     // A required calendar can't be checked: no slots (times added by hand excepted), with a reason the page can show.
     if (error instanceof BookingFailure && error.code === "CALENDAR_UNAVAILABLE") {

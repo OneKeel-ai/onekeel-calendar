@@ -7,6 +7,16 @@ import type { ProviderDefinition, ProviderId } from "@/lib/integrations/types";
 import { newId } from "@/lib/ids";
 import { logger } from "@/lib/logger";
 import { decryptCredential, type IntegrationDeps, withCredential } from "./credentials";
+import { blockedCalendarAddressesFor, isBlockedCalendar } from "@/features/privacy/server/guard";
+
+/**
+ * Private calendars: a user's provider account can list colleagues' calendars (for Google, the
+ * calendar id is the colleague's email). Calendars of someone who keeps theirs private, and whom
+ * this user isn't allowed for, are kept stored but never listed, ticked, written to or read.
+ */
+async function blockedFor(db: Database, userId: string): Promise<Set<string>> {
+  return blockedCalendarAddressesFor(db, userId);
+}
 
 export class ConnectionError extends Error {
   constructor(public readonly code: "NOT_FOUND" | "READ_ONLY" | "NO_CALENDARS") {
@@ -115,11 +125,15 @@ export async function connectAccount(
 export async function ensureDestination(db: Database, userId: string): Promise<void> {
   const [current] = await db.select().from(destinationCalendar).where(eq(destinationCalendar.userId, userId));
   if (current) return;
-  const candidates = await db
-    .select({ id: connectedCalendar.id, isPrimary: connectedCalendar.isPrimary })
-    .from(connectedCalendar)
-    .where(and(eq(connectedCalendar.userId, userId), eq(connectedCalendar.readOnly, false)))
-    .orderBy(asc(connectedCalendar.createdAt));
+  const [rows, blocked] = await Promise.all([
+    db
+      .select({ id: connectedCalendar.id, isPrimary: connectedCalendar.isPrimary, externalId: connectedCalendar.externalId })
+      .from(connectedCalendar)
+      .where(and(eq(connectedCalendar.userId, userId), eq(connectedCalendar.readOnly, false)))
+      .orderBy(asc(connectedCalendar.createdAt)),
+    blockedFor(db, userId),
+  ]);
+  const candidates = rows.filter((c) => !isBlockedCalendar(blocked, c.externalId));
   const pick = candidates.find((c) => c.isPrimary) ?? candidates[0];
   if (pick) await db.insert(destinationCalendar).values({ userId, connectedCalendarId: pick.id }).onConflictDoNothing();
 }
@@ -135,11 +149,13 @@ export type ConnectionView = {
 };
 
 export async function listConnections(db: Database, userId: string): Promise<ConnectionView[]> {
-  const [creds, calendars, [destination]] = await Promise.all([
+  const [creds, all, [destination], blocked] = await Promise.all([
     db.select().from(credential).where(eq(credential.userId, userId)).orderBy(asc(credential.createdAt)),
     db.select().from(connectedCalendar).where(eq(connectedCalendar.userId, userId)).orderBy(asc(connectedCalendar.name)),
     db.select().from(destinationCalendar).where(eq(destinationCalendar.userId, userId)),
+    blockedFor(db, userId),
   ]);
+  const calendars = all.filter((cal) => !isBlockedCalendar(blocked, cal.externalId));
   return creds.map((c) => ({
     id: c.id,
     provider: c.provider as ProviderId,
@@ -161,12 +177,13 @@ export async function listConnections(db: Database, userId: string): Promise<Con
   }));
 }
 
+/** One of the user's calendars they may use; someone else's private calendar answers NOT_FOUND. */
 async function ownedCalendar(db: Database, userId: string, calendarId: string) {
   const [cal] = await db
     .select()
     .from(connectedCalendar)
     .where(and(eq(connectedCalendar.id, calendarId), eq(connectedCalendar.userId, userId)));
-  if (!cal) throw new ConnectionError("NOT_FOUND");
+  if (!cal || isBlockedCalendar(await blockedFor(db, userId), cal.externalId)) throw new ConnectionError("NOT_FOUND");
   return cal;
 }
 
@@ -214,8 +231,14 @@ export async function setEventTypeCalendars(db: Database, userId: string, eventT
   const [et] = await db.select({ id: eventType.id }).from(eventType).where(and(eq(eventType.id, eventTypeId), personalOf(userId)));
   if (!et) throw new ConnectionError("NOT_FOUND");
   const ids = [...new Set(settings.conflictCalendarIds)];
+  const blocked = await blockedFor(db, userId);
   const owned = ids.length
-    ? await db.select({ id: connectedCalendar.id }).from(connectedCalendar).where(and(eq(connectedCalendar.userId, userId), inArray(connectedCalendar.id, ids)))
+    ? (
+        await db
+          .select({ id: connectedCalendar.id, externalId: connectedCalendar.externalId })
+          .from(connectedCalendar)
+          .where(and(eq(connectedCalendar.userId, userId), inArray(connectedCalendar.id, ids)))
+      ).filter((c) => !isBlockedCalendar(blocked, c.externalId))
     : [];
   if (owned.length !== ids.length) throw new ConnectionError("NOT_FOUND");
   if (settings.destinationCalendarId) {

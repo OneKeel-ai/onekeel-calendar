@@ -3,6 +3,7 @@ import type { Database } from "@/db/client";
 import { membership, profileSettings } from "@/db/schema";
 import { type EventTypeView, findPublicEventType, findPublicHost, type PublicHost } from "@/features/event-types/server/service";
 import { findPublicTeam, findPublicTeamEventType, type PublicTeam } from "@/features/teams/server/event-types";
+import { anyPrivate } from "@/features/privacy/server/guard";
 import type { HostPlan } from "./create";
 
 /**
@@ -71,6 +72,8 @@ async function resolveGroup(db: Database, usernames: string[], slug: string): Pr
   if (hosts.some((h) => !h)) return null;
   const people = hosts as PublicHost[];
   if (!(await allOptedIn(db, people.map((h) => h.id))) || !(await shareATeam(db, people.map((h) => h.id)))) return null;
+  // Someone with a private calendar can't be grouped by URL: a group page has no scheduling offer.
+  if (await anyPrivate(db, people.map((h) => h.id))) return null;
   const eventType = await findPublicEventType(db, people[0].id, slug);
   // Seats, series and private links are single-host features.
   if (!eventType || eventType.seatsPerSlot || eventType.recurringFrequency || eventType.linkOnly) return null;

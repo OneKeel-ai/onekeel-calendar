@@ -63,7 +63,7 @@ describe("saving an offer", () => {
     expect(first).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(await offerId("bob", team, "Quarterly review 2", ["exec@acme.com"])).not.toBe(first);
     expect(await db.select().from(schedulingOffer)).toHaveLength(2);
-    expect(await getOfferForEventType(db, first, team)).toEqual({ id: first, title: "Quarterly review", guests: ["cfo@acme.com", "exec@acme.com"], manualSlots: [], manualHostId: null });
+    expect(await getOfferForEventType(db, first, team)).toEqual({ id: first, title: "Quarterly review", guests: ["cfo@acme.com", "exec@acme.com"], manualSlots: [], manualHostId: null, restricted: false, offeredSlots: [] });
   });
 
   it("returns no offer when there is neither a title nor an attendee", async () => {

@@ -7,6 +7,7 @@ import { roleIn } from "@/features/teams/server/access";
 import { memberLabel } from "@/features/teams/server/availability";
 import { membersOf } from "@/features/teams/server/service";
 import { randomToken } from "@/lib/ids";
+import { allowedForEventTypeHosts, bookingNeedsOffer, hiddenFromViewer } from "@/features/privacy/server/guard";
 
 /**
  * Scheduling offers: the times an assistant emails on a host's behalf, plus a custom meeting
@@ -37,13 +38,35 @@ export type ManualSlot = { start: number; duration: number };
  * `manualHostId`: the single host the times added by hand were saved for. They only count for that
  * person, so a later change of host can't hand them to someone whose calendar nobody vouched for.
  */
-export type OfferView = { id: string; title: string | null; guests: string[]; manualSlots: ManualSlot[]; manualHostId: string | null };
+export type OfferView = {
+  id: string;
+  title: string | null;
+  guests: string[];
+  manualSlots: ManualSlot[];
+  manualHostId: string | null;
+  /** True: the client can book only `offeredSlots`. Offers saved before this existed: false. */
+  restricted: boolean;
+  /** Every time on the emailed card (epoch ms, minutes). Enforced only when `restricted`. */
+  offeredSlots: ManualSlot[];
+};
 
-export type SaveOfferInput = { eventTypeId: string; title: string; guests: string[]; manualSlots?: ManualSlotInput[] };
+export type SaveOfferInput = {
+  eventTypeId: string;
+  title: string;
+  guests: string[];
+  manualSlots?: ManualSlotInput[];
+  /** True: the client can book only `slots`. */
+  onlyOffered?: boolean;
+  /** Every time on the card, including the ones added by hand. Used only with `onlyOffered`. */
+  slots?: ManualSlotInput[];
+};
+
+/** Most times one card can offer when the client may book only those. */
+export const MAX_OFFERED_SLOTS = 10;
 
 export type SaveOfferResult =
   | { ok: true; offerId: string | null }
-  | { ok: false; message: string; fieldErrors?: { title?: string; guests?: string; manualSlots?: string } };
+  | { ok: false; message: string; fieldErrors?: { title?: string; guests?: string; manualSlots?: string; slots?: string } };
 
 const NOT_AVAILABLE = "This event type isn't available.";
 const FIX = "Please fix the highlighted fields.";
@@ -87,31 +110,83 @@ export function normalizeManualSlots(
   now: number,
 ): { ok: true; slots: ManualSlot[] } | { ok: false; error: string } {
   if (raw.length > MAX_OFFER_MANUAL_SLOTS) return { ok: false, error: `Add at most ${MAX_OFFER_MANUAL_SLOTS} times by hand` };
+  return checkSlots(raw, durations, now, MANUAL_WORDS);
+}
+
+/**
+ * The times on the card for an offer the client can book only from (`onlyOffered`): 1 to
+ * MAX_OFFERED_SLOTS, each checked like a time added by hand. Sorted by start.
+ */
+export function normalizeOfferedSlots(
+  raw: readonly ManualSlotInput[],
+  durations: readonly number[],
+  now: number,
+): { ok: true; slots: ManualSlot[] } | { ok: false; error: string } {
+  if (!raw.length) return { ok: false, error: "Pick at least one time to send" };
+  if (raw.length > MAX_OFFERED_SLOTS) return { ok: false, error: `Send at most ${MAX_OFFERED_SLOTS} times when the client can only book those` };
+  return checkSlots(raw, durations, now, OFFERED_WORDS);
+}
+
+type SlotWords = { invalid: string; past: string; step: string; far: string; twice: string };
+const MANUAL_WORDS: SlotWords = {
+  invalid: "One of the times added by hand isn't a valid date and time",
+  past: "A time added by hand is in the past",
+  step: "Times added by hand must start on a 5-minute mark (like 10:05)",
+  far: `Times added by hand can be at most ${MAX_MANUAL_SLOT_DAYS} days ahead`,
+  twice: "The same time was added by hand twice",
+};
+const OFFERED_WORDS: SlotWords = {
+  invalid: "One of the times isn't a valid date and time",
+  past: "One of the times is in the past",
+  step: "Times must start on a 5-minute mark (like 10:05)",
+  far: `Times can be at most ${MAX_MANUAL_SLOT_DAYS} days ahead`,
+  twice: "The same time is on the card twice",
+};
+
+function checkSlots(raw: readonly ManualSlotInput[], durations: readonly number[], now: number, words: SlotWords): { ok: true; slots: ManualSlot[] } | { ok: false; error: string } {
   const seen = new Set<string>();
   const slots: ManualSlot[] = [];
   for (const item of raw) {
     const start = typeof item.start === "string" && ISO_INSTANT.test(item.start.trim()) ? Date.parse(item.start.trim()) : Number.NaN;
-    if (!Number.isFinite(start)) return { ok: false, error: "One of the times added by hand isn't a valid date and time" };
-    if (start <= now) return { ok: false, error: "A time added by hand is in the past" };
-    if (start % STEP_MS !== 0) return { ok: false, error: "Times added by hand must start on a 5-minute mark (like 10:05)" };
-    if (start > now + MAX_MANUAL_SLOT_DAYS * DAY_MS) return { ok: false, error: `Times added by hand can be at most ${MAX_MANUAL_SLOT_DAYS} days ahead` };
+    if (!Number.isFinite(start)) return { ok: false, error: words.invalid };
+    if (start <= now) return { ok: false, error: words.past };
+    if (start % STEP_MS !== 0) return { ok: false, error: words.step };
+    if (start > now + MAX_MANUAL_SLOT_DAYS * DAY_MS) return { ok: false, error: words.far };
     if (!durations.includes(item.duration)) return { ok: false, error: `${item.duration} minutes isn't a length this meeting type offers` };
     const key = `${start}|${item.duration}`;
-    if (seen.has(key)) return { ok: false, error: "The same time was added by hand twice" };
+    if (seen.has(key)) return { ok: false, error: words.twice };
     seen.add(key);
     slots.push({ start, duration: item.duration });
   }
   return { ok: true, slots: slots.toSorted(byStart) };
 }
 
+/** Is this exact start and duration one of the offer's times on the card? */
+export function isOfferedSlot(offer: Pick<OfferView, "offeredSlots">, start: number, durationMin: number): boolean {
+  return offer.offeredSlots.some((s) => s.start === start && s.duration === durationMin);
+}
+
+/** A restricted offer allows only its times on the card; anything else may book any available time. */
+export function offerAllows(offer: Pick<OfferView, "restricted" | "offeredSlots"> | null | undefined, start: number, durationMin: number): boolean {
+  return !offer?.restricted || isOfferedSlot(offer, start, durationMin);
+}
+
 /**
  * Stable hash of an offer's content: same title, attendees and times added by hand (any order) →
  * same hash. Offers without times added by hand hash exactly as before they existed.
  */
-export function offerContentHash(title: string | null, guests: readonly string[], manualSlots: readonly ManualSlot[] = [], manualHostId?: string | null): string {
-  const content = manualSlots.length
+export function offerContentHash(
+  title: string | null,
+  guests: readonly string[],
+  manualSlots: readonly ManualSlot[] = [],
+  manualHostId?: string | null,
+  offeredSlots: readonly ManualSlot[] | null = null,
+): string {
+  const content: Record<string, unknown> = manualSlots.length
     ? { title, guests: [...guests].sort(), manualSlots: manualSlots.toSorted(byStart).map((s) => [s.start, s.duration]), ...(manualHostId && { host: manualHostId }) }
     : { title, guests: [...guests].sort() };
+  // Restricted offers only (null = unrestricted), so every earlier offer keeps its hash.
+  if (offeredSlots) content.onlyOffered = offeredSlots.toSorted(byStart).map((s) => [s.start, s.duration]);
   return createHash("sha256").update(JSON.stringify(content)).digest("hex");
 }
 
@@ -174,6 +249,13 @@ async function hostEmails(db: DbOrTx, et: OfferEventType): Promise<string[]> {
   return rows.map((r) => r.email);
 }
 
+/** Ids of the people who host this event type. */
+async function hostIds(db: DbOrTx, et: OfferEventType): Promise<string[]> {
+  if (!et.teamId) return [et.ownerUserId];
+  const rows = await db.select({ userId: eventTypeHost.userId }).from(eventTypeHost).where(eq(eventTypeHost.eventTypeId, et.id));
+  return rows.map((r) => r.userId);
+}
+
 /** Every duration a booker may pick for this event type (default first). */
 async function durationsFor(db: DbOrTx, et: OfferEventType): Promise<number[]> {
   const extra = await db.select({ d: eventTypeDurationOption.durationMinutes }).from(eventTypeDurationOption).where(eq(eventTypeDurationOption.eventTypeId, et.id));
@@ -196,6 +278,8 @@ async function singleHostId(db: DbOrTx, et: OfferEventType): Promise<string | nu
 export async function saveOffer(db: Database, userId: string, input: SaveOfferInput, now: number = Date.now()): Promise<SaveOfferResult> {
   const et = await schedulableEventType(db, userId, input.eventTypeId);
   if (!et) return { ok: false, message: NOT_AVAILABLE };
+  // Private calendars: only someone allowed for every host may send times for them (same answer as unknown).
+  if ((await hiddenFromViewer(db, userId, await hostIds(db, et))).size) return { ok: false, message: NOT_AVAILABLE };
   const title = normalizeOfferTitle(input.title);
   if (title && title.length > MAX_OFFER_TITLE) {
     return { ok: false, message: FIX, fieldErrors: { title: `Keep the title under ${MAX_OFFER_TITLE} characters` } };
@@ -226,9 +310,20 @@ export async function saveOffer(db: Database, userId: string, input: SaveOfferIn
     if (!checked.ok) return { ok: false, message: FIX, fieldErrors: { manualSlots: checked.error } };
     manualSlots = checked.slots;
   }
-  if (!title && !guests.guests.length && !manualSlots.length) return { ok: true, offerId: null };
+  let offeredSlots: ManualSlot[] | null = null;
+  if (input.onlyOffered) {
+    if (et.seatsPerSlot) return { ok: false, message: FIX, fieldErrors: { slots: "Group events with seats can't be limited to the times you send" } };
+    const checked = normalizeOfferedSlots(input.slots ?? [], await durationsFor(db, et), now);
+    if (!checked.ok) return { ok: false, message: FIX, fieldErrors: { slots: checked.error } };
+    offeredSlots = checked.slots;
+    if (manualSlots.some((m) => !isOfferedSlot({ offeredSlots: checked.slots }, m.start, m.duration))) {
+      return { ok: false, message: FIX, fieldErrors: { slots: "Every time added by hand must also be one of the times you send" } };
+    }
+  }
+  // A private host's links always carry an offer: their public pages book nothing without one.
+  if (!title && !guests.guests.length && !manualSlots.length && !offeredSlots && !(await bookingNeedsOffer(db, et.id))) return { ok: true, offerId: null };
 
-  const contentHash = offerContentHash(title, guests.guests, manualSlots, manualHostId);
+  const contentHash = offerContentHash(title, guests.guests, manualSlots, manualHostId, offeredSlots);
   const where = and(eq(schedulingOffer.createdBy, userId), eq(schedulingOffer.eventTypeId, et.id), eq(schedulingOffer.contentHash, contentHash));
   const [existing] = await db.select({ id: schedulingOffer.id }).from(schedulingOffer).where(where);
   if (existing) return { ok: true, offerId: existing.id };
@@ -242,6 +337,8 @@ export async function saveOffer(db: Database, userId: string, input: SaveOfferIn
       title,
       guests: guests.guests,
       manualSlots: manualSlots.map((s) => ({ start: new Date(s.start).toISOString(), duration: s.duration, hostId: manualHostId! })),
+      restricted: offeredSlots !== null,
+      offeredSlots: (offeredSlots ?? []).map((s) => ({ start: new Date(s.start).toISOString(), duration: s.duration })),
       contentHash,
     })
     .onConflictDoNothing();
@@ -262,7 +359,10 @@ export async function offerContacts(db: Database, userId: string, eventTypeId: s
 }
 
 /** Loads an offer inside any query context; null when unknown or saved for another event type. */
-export async function loadOffer(db: DbOrTx, offerId: string, eventTypeId: string): Promise<OfferView | null> {
+/** For a private host, a link that shows all open times stops working this long after it was made. */
+export const PRIVATE_OPEN_OFFER_DAYS = 30;
+
+export async function loadOffer(db: DbOrTx, offerId: string, eventTypeId: string, now: number = Date.now()): Promise<OfferView | null> {
   if (!offerId || offerId.length > 64 || !OFFER_ID.test(offerId)) return null;
   const [row] = await db
     .select({
@@ -270,11 +370,22 @@ export async function loadOffer(db: DbOrTx, offerId: string, eventTypeId: string
       title: schedulingOffer.title,
       guests: schedulingOffer.guests,
       manualSlots: schedulingOffer.manualSlots,
+      restricted: schedulingOffer.restricted,
+      offeredSlots: schedulingOffer.offeredSlots,
       eventTypeId: schedulingOffer.eventTypeId,
+      createdBy: schedulingOffer.createdBy,
+      createdAt: schedulingOffer.createdAt,
     })
     .from(schedulingOffer)
     .where(eq(schedulingOffer.id, offerId));
   if (!row || row.eventTypeId !== eventTypeId) return null;
+  // Private calendars: the link only works while the person who made it may still schedule this
+  // host (so removing someone, or links made before the calendar went private, stop working), and
+  // a link that shows all open times is short-lived. Checked live on every use.
+  if (await bookingNeedsOffer(db, eventTypeId)) {
+    if (!(await allowedForEventTypeHosts(db, row.createdBy, eventTypeId))) return null;
+    if (!row.restricted && now - row.createdAt.getTime() > PRIVATE_OPEN_OFFER_DAYS * 24 * 60 * 60_000) return null;
+  }
   const stored = row.manualSlots ?? [];
   // All of an offer's times are saved for one host; anything else is not trusted.
   const hostIds = new Set(stored.map((s) => s.hostId ?? ""));
@@ -282,7 +393,11 @@ export async function loadOffer(db: DbOrTx, offerId: string, eventTypeId: string
   const manualSlots = manualHostId
     ? stored.map((s) => ({ start: Date.parse(s.start), duration: s.duration })).filter((s) => Number.isFinite(s.start) && Number.isInteger(s.duration) && s.duration > 0)
     : [];
-  return { id: row.id, title: row.title, guests: row.guests, manualSlots, manualHostId };
+  // A restricted offer whose stored times can't be read offers nothing (fail closed), never everything.
+  const offeredSlots = (row.offeredSlots ?? [])
+    .map((s) => ({ start: Date.parse(s.start), duration: s.duration }))
+    .filter((s) => Number.isFinite(s.start) && Number.isInteger(s.duration) && s.duration > 0);
+  return { id: row.id, title: row.title, guests: row.guests, manualSlots, manualHostId, restricted: row.restricted, offeredSlots };
 }
 
 export async function getOfferForEventType(db: Database, offerId: string, eventTypeId: string): Promise<OfferView | null> {

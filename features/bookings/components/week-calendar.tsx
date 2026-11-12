@@ -22,6 +22,8 @@ type Props = {
   busy: boolean;
   loading: boolean;
   loadError: string | null;
+  /** Replaces the usual "No times available this week" line. */
+  emptyMessage?: string;
   seated: boolean;
   preferences: ReactNode;
   onChangeWeek: (delta: number) => void;
@@ -107,7 +109,11 @@ export function WeekCalendar(props: Props) {
           <AlertDescription>{props.loadError}</AlertDescription>
         </Alert>
       )}
-      {!props.loading && !props.loadError && empty && <p className="mt-3 text-sm text-muted-foreground">No times available this week. Try the next week.</p>}
+      {!props.loading && !props.loadError && empty && (
+        <p className="mt-3 text-sm text-muted-foreground" role={props.emptyMessage ? "status" : undefined}>
+          {props.emptyMessage ?? "No times available this week. Try the next week."}
+        </p>
+      )}
       {props.preferences}
     </section>
   );

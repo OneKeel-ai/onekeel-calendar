@@ -20,9 +20,10 @@ import { answersSchema, type Answers } from "../responses";
 import { bookingRedirectUrl } from "../redirect";
 import { isUsablePrivateLink } from "@/features/event-types/server/private-links";
 import { cancelSeat, findSeat } from "./decisions";
-import { getOfferForEventType } from "@/features/offers/server/service";
+import { getOfferForEventType, offerAllows } from "@/features/offers/server/service";
+import { bookingNeedsOffer } from "@/features/privacy/server/guard";
 import { buildBookingEmails } from "./notifications";
-import { BookingFailure, cancelByAttendee, cancelSeriesByAttendee, createBooking, findBookingById, holdSlot } from "./service";
+import { BookingFailure, cancelByAttendee, cancelSeriesByAttendee, createBooking, findBookingById, findBookingForManage, holdSlot, isMovableBooking } from "./service";
 import { resolveBookingTarget, type TargetKey } from "./targets";
 
 /**
@@ -51,6 +52,7 @@ const FAILURE_MESSAGES: Record<string, string> = {
   CALENDAR_UNAVAILABLE: "Online booking is temporarily unavailable because the host's calendar can't be checked. Please contact them directly.",
   INVALID_RECURRENCE: "That number of occurrences isn't available for this event.",
   OFFER_INVALID: "This scheduling link is no longer valid. Ask the sender for new times.",
+  OFFER_REQUIRED: "This meeting is by invitation. Ask your contact for times.",
 };
 
 const ZOOM_UNAVAILABLE = "Zoom isn't available for this booking right now. Please choose another location or contact the host directly.";
@@ -77,8 +79,30 @@ export async function holdSlotAction(raw: unknown): Promise<PublicResult> {
   if (!parsed.success) return { ok: false, message: "Invalid request." };
   const target = await resolve(parsed.data);
   if (!target) return { ok: false, message: FAILURE_MESSAGES.NOT_FOUND };
-  // Holds are per host; a team slot's host is only known at booking time, so none is taken.
-  if (target.target.hosts) return { ok: true };
+  // Moving a booking with its manage token: that booking's offer applies (never the URL's).
+  let offerId = parsed.data.offer;
+  let rescheduling = false;
+  if (parsed.data.reschedule) {
+    const manage = await findBookingForManage(target.db, parsed.data.reschedule.uid, parsed.data.reschedule.token);
+    // Only a booking that can still be moved: a cancelled, rejected or past booking's link opens nothing.
+    if (!manage?.canManage || manage.booking.eventTypeId !== target.eventType.id || !isMovableBooking(manage.booking, Date.now())) {
+      return { ok: false, message: FAILURE_MESSAGES.RESCHEDULE_NOT_ALLOWED };
+    }
+    offerId = manage.booking.offerId ?? undefined;
+    rescheduling = true;
+  }
+  // Holds are per host; a team slot's host is only known at booking time, so none is taken. The
+  // offer rules still answer here, so a team page can't be probed without an invitation.
+  if (target.target.hosts) {
+    if (offerId) {
+      const offer = await getOfferForEventType(target.db, offerId, target.eventType.id);
+      if (!offer) return { ok: false, message: FAILURE_MESSAGES.OFFER_INVALID };
+      if (!offerAllows(offer, parsed.data.start, parsed.data.duration)) return { ok: false, message: FAILURE_MESSAGES.SLOT_UNAVAILABLE };
+    } else if (await bookingNeedsOffer(target.db, target.eventType.id)) {
+      return { ok: false, message: FAILURE_MESSAGES.OFFER_REQUIRED };
+    }
+    return { ok: true };
+  }
   if (target.eventType.linkOnly && !(await isUsablePrivateLink(target.db, target.eventType.id, parsed.data.link, Date.now()))) {
     return { ok: false, message: FAILURE_MESSAGES.LINK_INVALID };
   }
@@ -91,7 +115,8 @@ export async function holdSlotAction(raw: unknown): Promise<PublicResult> {
       token: parsed.data.holdToken,
       now: Date.now(),
       externalBusy: externalBusyFor(target.host, target.eventType.id),
-      offer: parsed.data.offer,
+      offer: offerId,
+      rescheduling,
     });
   } catch (error) {
     if (error instanceof BookingFailure) return { ok: false, message: FAILURE_MESSAGES[error.code] ?? "Unavailable." };

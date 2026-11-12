@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { PAGE_CLASS, PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -64,6 +65,12 @@ export default async function CalendarsPage({ searchParams }: PageProps<"/settin
           </Alert>
         )}
         <ConnectStatus />
+        <p className="text-[13px] leading-5 text-muted-foreground">
+          Want only certain people to see or schedule your calendar in Keel Calendar?{" "}
+          <Link href="/settings/privacy" className="font-medium text-foreground underline underline-offset-2">
+            Calendar privacy
+          </Link>
+        </p>
 
         {connections.length === 0 ? (
           <div className="rounded-[12px] border border-border bg-card p-5 text-sm text-muted-foreground">

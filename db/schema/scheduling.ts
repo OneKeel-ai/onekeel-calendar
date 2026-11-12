@@ -337,6 +337,10 @@ export const schedulingOffer = pgTable(
      * instant, `duration` in minutes.
      */
     manualSlots: jsonb("manual_slots").$type<{ start: string; duration: number; hostId?: string }[]>().notNull().default([]),
+    /** True: the client can book only `offeredSlots` (the times on the emailed card). */
+    restricted: boolean("restricted").notNull().default(false),
+    /** Every time on the emailed card (ISO 8601 UTC start, minutes). Enforced only when `restricted`. */
+    offeredSlots: jsonb("offered_slots").$type<{ start: string; duration: number }[]>().notNull().default([]),
     contentHash: text("content_hash").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

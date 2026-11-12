@@ -130,6 +130,23 @@ describe("renderEmailEmbed", () => {
     expect(text).toContain(`See all available times: https://cal.example.com/ada/intro?duration=30&offer=${offer}`);
   });
 
+  it("leaves the see-all link out of the HTML and the text when showAllTimes is false", () => {
+    const offer = "Zq9_offer-ID_0123456789abcdefABCD";
+    const shown = renderEmailEmbed({ ...base, offer });
+    const { html, text } = renderEmailEmbed({ ...base, offer, showAllTimes: false });
+    expect(hrefs(html)).toHaveLength(2);
+    expect(hrefs(html).every((h) => new URL(h).searchParams.has("slot"))).toBe(true);
+    expect(html).not.toContain("See all available times");
+    expect(text).not.toContain("See all available times");
+    // No leftover row, spacing or separator: exactly the default output minus the link.
+    expect(html).toBe(shown.html.replace(/<tr><td style="padding:12px 24px 0 24px;"><a href="[^"]*\?duration=30&amp;offer=[^"]*"[^>]*>See all available times<\/a><\/td><\/tr>/, ""));
+    expect(text).toBe(shown.text.replace(/\n\nSee all available times: \S+$/, ""));
+    expect(text.endsWith("\n")).toBe(false);
+    expect(text.split("\n").at(-1)).toMatch(/^- .*slot=/);
+    // Default unchanged for other callers.
+    expect(renderEmailEmbed({ ...base, offer, showAllTimes: true })).toEqual(shown);
+  });
+
   it("rejects an offer id that isn't url-safe instead of putting it in a link", () => {
     expect(() => renderEmailEmbed({ ...base, offer: "x&title=evil" })).toThrow(EmailEmbedError);
     expect(renderEmailEmbed({ ...base, offer: "" }).html).not.toContain("offer=");

@@ -1,7 +1,8 @@
 import { and, arrayContains, eq, inArray, isNull, or, type SQL } from "drizzle-orm";
 import type { Database } from "@/db/client";
-import { booking, eventType, webhook, webhookDelivery } from "@/db/schema";
+import { booking, eventType, eventTypeHost, webhook, webhookDelivery } from "@/db/schema";
 import { findBookingById } from "@/features/bookings/server/service";
+import { hiddenFromViewer } from "@/features/privacy/server/guard";
 import { requireTeamRole } from "@/features/teams/server/access";
 import { newId } from "@/lib/ids";
 import { logger } from "@/lib/logger";
@@ -76,10 +77,26 @@ async function bookingSubscriptions(db: Database, organizerId: string, eventType
   }
   if (teamIds.length > 0) scopes.push(inArray(webhook.teamId, teamIds));
   if (scopes.length === 0) return [];
-  return db
-    .select({ id: webhook.id })
+  const subscriptions = await db
+    .select({ id: webhook.id, ownerUserId: webhook.ownerUserId })
     .from(webhook)
     .where(and(eq(webhook.active, true), arrayContains(webhook.triggers, [trigger]), or(...scopes)));
+  if (subscriptions.length === 0) return [];
+  // Private calendars: the payload carries the meeting's title and attendees, so it only goes to
+  // webhooks set up by someone every private host allows (also after that person left the team).
+  const hosts = await db.select({ userId: eventTypeHost.userId }).from(eventTypeHost).where(eq(eventTypeHost.eventTypeId, eventTypeId));
+  const hostIds = [...new Set([organizerId, ...hosts.map((h) => h.userId)])];
+  const allowed: { id: string }[] = [];
+  const checked = new Map<string, boolean>();
+  for (const sub of subscriptions) {
+    let ok = checked.get(sub.ownerUserId);
+    if (ok === undefined) {
+      ok = (await hiddenFromViewer(db, sub.ownerUserId, hostIds)).size === 0;
+      checked.set(sub.ownerUserId, ok);
+    }
+    if (ok) allowed.push({ id: sub.id });
+  }
+  return allowed;
 }
 
 /**

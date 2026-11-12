@@ -8,6 +8,7 @@ import type { BusyInterval, ProviderId } from "@/lib/integrations/types";
 import { errorSummary, logger } from "@/lib/logger";
 import { isHostOf } from "@/features/bookings/server/core";
 import { selectConflictCalendars } from "./conflict-note";
+import { blockedCalendarAddressesFor, isBlockedCalendar } from "@/features/privacy/server/guard";
 import { assertConferencingReady } from "./conferencing";
 import { type IntegrationDeps, withCredential } from "./credentials";
 
@@ -50,7 +51,15 @@ type CalendarRow = { id: string; credentialId: string; externalId: string; name:
 
 /** Conflict calendars in one query: the event type's override if it has one, else the defaults (INT-006). */
 async function conflictCalendars(db: Database, userId: string, eventTypeId?: string): Promise<CalendarRow[]> {
-  const rows = await db
+  const [all, blocked] = await Promise.all([conflictCalendarRows(db, userId, eventTypeId), blockedCalendarAddressesFor(db, userId)]);
+  // Private calendars: someone's private calendar never counts for a user not allowed for them, even if ticked before.
+  const rows = all.filter((r) => !isBlockedCalendar(blocked, r.externalId));
+  const chosen = selectConflictCalendars(rows.map((r) => ({ ...r, inTypeList: r.overrideFor !== null })));
+  return chosen.map(({ invalidAt, checkConflicts: _c, overrideFor: _o, inTypeList: _t, ...r }) => ({ ...r, invalid: invalidAt !== null }));
+}
+
+async function conflictCalendarRows(db: Database, userId: string, eventTypeId?: string) {
+  return db
     .select({
       id: connectedCalendar.id,
       credentialId: connectedCalendar.credentialId,
@@ -71,8 +80,6 @@ async function conflictCalendars(db: Database, userId: string, eventTypeId?: str
       ),
     )
     .where(eq(connectedCalendar.userId, userId));
-  const chosen = selectConflictCalendars(rows.map((r) => ({ ...r, inTypeList: r.overrideFor !== null })));
-  return chosen.map(({ invalidAt, checkConflicts: _c, overrideFor: _o, inTypeList: _t, ...r }) => ({ ...r, invalid: invalidAt !== null }));
 }
 
 /** The calendar bookings are written to, mirroring sync.ts: event type override, else the host's default. */
@@ -82,10 +89,12 @@ async function destinationState(db: Database, userId: string, eventTypeId?: stri
   const id = override[0]?.dest ?? userDest?.connectedCalendarId;
   if (!id) return null;
   const [row] = await db
-    .select({ readOnly: connectedCalendar.readOnly, invalidAt: credential.invalidAt })
+    .select({ readOnly: connectedCalendar.readOnly, invalidAt: credential.invalidAt, externalId: connectedCalendar.externalId })
     .from(connectedCalendar)
     .innerJoin(credential, eq(credential.id, connectedCalendar.credentialId))
     .where(and(eq(connectedCalendar.id, id), eq(connectedCalendar.userId, userId)));
+  // Someone else's private calendar is never a usable destination (as in sync.ts).
+  if (row && isBlockedCalendar(await blockedCalendarAddressesFor(db, userId), row.externalId)) return null;
   return row ? { readOnly: row.readOnly, invalid: row.invalidAt !== null } : null;
 }
 

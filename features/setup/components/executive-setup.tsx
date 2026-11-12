@@ -52,6 +52,14 @@ export function ExecutiveSetupSteps({ compact = false }: { compact?: boolean }) 
         The meeting still used your Zoom and listed you as the host. The team setup above makes the executive the real
         host, with their own Zoom.
       </p>
+      <p className={P}>
+        Need an executive&apos;s calendar kept private? They can turn on{" "}
+        <Link href="/settings/privacy" className={A}>
+          Calendar privacy
+        </Link>{" "}
+        in Settings and name who may
+        schedule for them. Use a team with only those people.
+      </p>
       {compact && (
         <div>
           <Button asChild variant="outline" className="h-8 rounded-md px-3 text-[13px]">

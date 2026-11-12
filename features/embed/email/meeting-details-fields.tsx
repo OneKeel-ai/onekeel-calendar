@@ -253,9 +253,10 @@ export function MeetingDetails({
   );
 }
 
-/** Why the copy buttons are off right now, with a retry when saving failed. Nothing when copy is allowed. */
+/** Why the copy buttons are off right now, with a retry when saving failed. Nothing when copy is allowed or no time is picked. */
 export function OfferSaveStatus({ gate, onRetry }: { gate: CopyGate; onRetry: () => void }) {
-  if (gate.canCopy) return null;
+  // Nothing picked yet: the count under the times already says so.
+  if (gate.canCopy || gate.status === "empty") return null;
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="email-offer-status">
       <p role="status" className={gate.status === "error" ? errorText : hint}>

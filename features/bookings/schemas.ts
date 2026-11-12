@@ -40,6 +40,8 @@ export const holdSchema = eventRefSchema.extend({
   link: z.string().max(128).optional(),
   /** Scheduling offer id: a time added by hand to it can be held. */
   offer: offerIdSchema.optional(),
+  /** Moving a booking: its manage token. The booking's own offer then applies, never the URL's. */
+  reschedule: rescheduleRefSchema.optional(),
 });
 
 export const bookerSchema = z.object({

@@ -17,7 +17,7 @@ import { emitEmbed, isEmbedded } from "@/lib/embed/bridge";
 import { type FormatPrefs, formatDateLong, formatTime } from "@/lib/format";
 import type { Answer, Answers } from "../responses";
 import { createBookingAction } from "../server/public-actions";
-import { isInvalidOfferError } from "./offer-link";
+import { isInvalidOfferError, isInvitationOnlyError } from "./offer-link";
 import { solveCaptcha } from "./captcha";
 import { QuestionField } from "./question-field";
 
@@ -56,12 +56,14 @@ type Props = {
   onTaken: () => void;
   /** The server refused the link's offer (gone or for another meeting type). */
   onOfferInvalid?: () => void;
+  /** The host's pages are by invitation and this booking has no usable link: show only that message. */
+  onInvitationOnly?: () => void;
 };
 
 const FREQUENCY_WORD = { weekly: "week", monthly: "month" } as const;
 
 /** The booker's details form: identity, guests, location, questions, series length (BKG-004). */
-export function BookingForm({ config, slot, duration, prefs, tokens, onBack, onTaken, onOfferInvalid }: Props) {
+export function BookingForm({ config, slot, duration, prefs, tokens, onBack, onTaken, onOfferInvalid, onInvitationOnly }: Props) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<{ message: string; fields?: Record<string, string> } | null>(null);
@@ -140,6 +142,10 @@ export function BookingForm({ config, slot, duration, prefs, tokens, onBack, onT
     emitEmbed("bookingFailed", { message: result.message });
     if (config.offer && isInvalidOfferError(result)) {
       onOfferInvalid?.();
+      return;
+    }
+    if (onInvitationOnly && isInvitationOnlyError(result)) {
+      onInvitationOnly();
       return;
     }
     setError({ message: result.message, fields: result.fieldErrors });

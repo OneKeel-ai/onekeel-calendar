@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getDb } from "@/db/client";
 import { BookingPageView } from "@/features/bookings/components/booking-page";
 import { offerTitleFromQuery } from "@/features/offers/server/service";
+import { bookingNeedsOffer } from "@/features/privacy/server/guard";
 import { resolveBookingTarget, safeDecode } from "@/features/bookings/server/targets";
 
 async function load(params: PageProps<"/[username]/[slug]">["params"]) {
@@ -14,8 +15,10 @@ export async function generateMetadata({ params, searchParams }: PageProps<"/[us
   const target = await load(params);
   // A title the sender wrote in Email times replaces the meeting type name the client would see.
   const offerTitle = target ? await offerTitleFromQuery(getDb(), await searchParams, target.eventType.id) : null;
+  // A private host: the tab shows nothing about them unless the link names its own title.
+  const byInvitation = target ? await bookingNeedsOffer(getDb(), target.eventType.id) : false;
   // Reschedule and private links carry tokens in the URL: no referrer.
-  return { title: target ? `${offerTitle || target.eventType.title} · ${target.displayName}` : "Not found", referrer: "no-referrer" };
+  return { title: !target ? "Not found" : byInvitation ? offerTitle || "Meeting invitation" : `${offerTitle || target.eventType.title} · ${target.displayName}`, referrer: "no-referrer" };
 }
 
 /** Personal booking page, or a dynamic group's (`/ada+bob/intro`, TEAM-009). */

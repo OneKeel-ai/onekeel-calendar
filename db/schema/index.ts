@@ -6,3 +6,4 @@ export * from "./scheduling";
 export * from "./integrations";
 export * from "./automation";
 export * from "./instance";
+export * from "./privacy";

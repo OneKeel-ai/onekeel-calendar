@@ -1,9 +1,10 @@
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { booking, bookingReference, credential, user } from "@/db/schema";
+import { booking, bookingReference, calendarGuard, credential, user } from "@/db/schema";
 import { cancelBySystem, createBooking, findBookingById, getAvailableSlots } from "@/features/bookings/server/service";
 import { createBookingProcessHandler, RetrySyncError, stableJobId } from "@/jobs/booking-process";
 import { getExternalBusy } from "@/features/calendars/server/busy";
+import { loadConflictNotes } from "@/features/setup/server/conflict-notes";
 import {
   connectAccount,
   disconnectAccount,
@@ -450,5 +451,56 @@ describe("credential health (INT-012)", () => {
     expect(created.booking.status).toBe("accepted");
     const outcome = await syncCreated(deps(), (await findBookingById(db, created.booking.id))!);
     expect(outcome.failures).toEqual([]); // no usable destination: nothing attempted
+  });
+});
+
+describe("private calendars on a colleague's connection", () => {
+  beforeEach(async () => {
+    await resetDatabase(db);
+    await db.execute(sql`TRUNCATE "calendar_guard"`);
+  });
+
+  /** Hana's Google account also lists "team@example.com", someone else's calendar, ticked before it went private. */
+  async function withColleagueCalendar() {
+    const s = await setup();
+    const team = (await listConnections(db, "h1"))[0].calendars.find((c) => c.name === "Team")!;
+    await setConflictCheck(db, "h1", team.id, true);
+    google.events.get("team@example.com")!.push({ id: "board", summary: "Board", start: { dateTime: "2026-10-05T10:00:00Z" }, end: { dateTime: "2026-10-05T11:00:00Z" } });
+    const refs = async () => (await getExternalBusy(deps(), { userId: "h1", eventTypeId: s.eventType.id, window: MONDAY, timeZone: "UTC" })).busy.map((b) => b.ref);
+    expect(await refs()).toContain("Team");
+    return { s, team, refs };
+  }
+
+  it("hides it, refuses ticking it and ignores it for busy times and notes when Hana isn't allowed", async () => {
+    const { s, team, refs } = await withColleagueCalendar();
+    // The protected person's account email is the calendar id (Google): protected implicitly.
+    await db.insert(calendarGuard).values({ email: "team@example.com", delegates: ["someone@example.com"] });
+    now += 10 * 60_000; // past the cache TTL: a fresh read would include it if it were still chosen
+    expect((await listConnections(db, "h1"))[0].calendars.map((c) => c.name)).toEqual(["Hana"]);
+    await expect(setConflictCheck(db, "h1", team.id, true)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(setDestination(db, "h1", team.id)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(setEventTypeCalendars(db, "h1", s.eventType.id, { conflictCalendarIds: [team.id], destinationCalendarId: null })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(await refs()).not.toContain("Team");
+    const notes = await loadConflictNotes(db, "h1", [{ eventTypeId: s.eventType.id, hostId: "h1" }]);
+    expect(notes.get(s.eventType.id)).toBeUndefined();
+    // The row is kept, only filtered on use.
+    expect((await db.select().from(credential)).length).toBe(1);
+  });
+
+  it("protects extra calendar addresses too, case-insensitively", async () => {
+    const { refs } = await withColleagueCalendar();
+    await db.insert(calendarGuard).values({ email: "tre@example.com", calendarAddresses: ["TEAM@Example.com"] });
+    now += 10 * 60_000;
+    expect(await refs()).not.toContain("Team");
+  });
+
+  it("works as before for an allowed person", async () => {
+    const { s, team, refs } = await withColleagueCalendar();
+    await db.insert(calendarGuard).values({ email: "team@example.com", delegates: ["hana@example.com"] });
+    now += 10 * 60_000;
+    expect((await listConnections(db, "h1"))[0].calendars.map((c) => c.name)).toEqual(["Hana", "Team"]);
+    await setConflictCheck(db, "h1", team.id, true);
+    await setEventTypeCalendars(db, "h1", s.eventType.id, { conflictCalendarIds: [team.id], destinationCalendarId: null });
+    expect(await refs()).toContain("Team");
   });
 });

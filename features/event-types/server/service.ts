@@ -6,6 +6,7 @@ import { newId } from "@/lib/ids";
 import { type EventTypeForm, eventTypeFormSchema, type LocationKind, type Question } from "../schemas";
 import { createDefaultReminder } from "@/features/workflows/server/service";
 import { applyLocks } from "@/features/teams/managed";
+import { eventTypesNeedingOffer } from "@/features/privacy/server/guard";
 
 export type EventTypeRow = typeof eventType.$inferSelect;
 export type EventTypeLocationView = { kind: LocationKind; value: string | null };
@@ -299,7 +300,9 @@ export async function listPublicEventTypes(db: Database, hostId: string): Promis
     .from(eventType)
     .where(and(personalOf(hostId), eq(eventType.enabled, true), eq(eventType.hidden, false)))
     .orderBy(asc(eventType.position), asc(eventType.createdAt));
-  return withDurations(db, rows);
+  // Private calendars: types that need an emailed offer are never listed publicly.
+  const needOffer = await eventTypesNeedingOffer(db, rows.map((r) => r.id));
+  return withDurations(db, rows.filter((r) => !needOffer.has(r.id)));
 }
 
 /** Enabled event type by slug; hidden ones are still bookable by direct link (EVT-014). */

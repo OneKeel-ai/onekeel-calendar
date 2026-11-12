@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Lock } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -8,6 +9,7 @@ import { EmailEmbedPanel } from "@/features/embed/email/email-embed-panel";
 import { EMPTY_MEETING_DETAILS, type MeetingDetailsValue } from "@/features/embed/email/meeting-details";
 import { type LoadBusy, pickPrincipal, pickType, planKey } from "@/features/embed/email/planner";
 import { choiceStorage, readChoice, writeChoice } from "@/features/embed/email/schedule-choice";
+import { privateHostNotice } from "@/features/privacy/components/wording";
 import { loadScheduleAvailability } from "../server/scheduling-actions";
 import type { SchedulingPrincipal } from "../types";
 import { conflictNotice, eventTypeEditHref } from "./conflict-note";
@@ -122,6 +124,12 @@ export function ScheduleWorkspace({ principals, appUrl }: { principals: Scheduli
             </>
           )}
         </p>
+        {type.privateHost && (
+          <p className="flex max-w-2xl items-start gap-2 text-[13px] leading-5 text-muted-foreground" data-testid="schedule-private-host">
+            <Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <span>{privateHostNotice(self ? "you" : principal.label, type.privateHost.allowed)}</span>
+          </p>
+        )}
         <ConflictNoticeView notice={notice} />
       </div>
 
@@ -134,7 +142,7 @@ export function ScheduleWorkspace({ principals, appUrl }: { principals: Scheduli
             planner={{ hostLabel: self ? "you" : principal.label, loadBusy: viewTeamId ? loadBusy : undefined }}
             // Every type here has one host (personal, or a single-host team type). The server still
             // refuses times added by hand for seated types, and that error is shown by the switch.
-            offer={{ eventTypeId: type.id, value: details, onChange: setDetails, manualTimes: true }}
+            offer={{ eventTypeId: type.id, value: details, onChange: setDetails, manualTimes: true, privateHost: Boolean(type.privateHost) }}
           />
         ) : (
           <div className="flex flex-col gap-3" aria-busy="true">

@@ -1,6 +1,6 @@
 "use client";
 
-import { Calendar, CalendarCheck, Clock, House, Layers, Link as LinkIcon, ListChecks, Mail, Route, Settings, ShieldCheck, Users } from "lucide-react";
+import { Calendar, CalendarCheck, Clock, House, Layers, Link as LinkIcon, ListChecks, Lock, Mail, Route, Settings, ShieldCheck, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -30,6 +30,7 @@ const GROUPS: { label?: string; items: NavItem[] }[] = [
     items: [
       { href: "/setup", label: "Setup", icon: ListChecks },
       { href: "/settings/calendars", label: "Calendars", icon: Calendar },
+      { href: "/settings/privacy", label: "Calendar privacy", icon: Lock },
       { href: "/settings/webhooks", label: "Webhooks", icon: LinkIcon },
     ],
   },

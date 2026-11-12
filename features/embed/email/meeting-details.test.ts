@@ -12,6 +12,13 @@ import {
   removeGuest,
   SAVING_MESSAGE,
   splitAddresses,
+  DETAILS_SAVE_FAILED,
+  EMPTY_MESSAGE,
+  offeredSlotsInput,
+  offerPlan,
+  type OfferRules,
+  OPEN_RULES,
+  TIMES_SAVE_FAILED,
 } from "./meeting-details";
 
 describe("email addresses", () => {
@@ -141,5 +148,77 @@ describe("copy gate with times added by hand", () => {
     const error = { status: "error", key, message: "Please fix", fieldErrors: { manualSlots: "A time added by hand is in the past" } } as const;
     expect(copyGate("et1", EMPTY_MEETING_DETAILS, error, manual)).toEqual({ canCopy: false, status: "error", message: "Please fix" });
     expect(copyGate("et1", EMPTY_MEETING_DETAILS, { status: "saved", key, offerId: null }, manual)).toMatchObject({ canCopy: false, status: "error" });
+  });
+});
+
+describe("copy gate when the client can only book the picked times", () => {
+  const free = "2026-11-16T15:00:00.000Z";
+  const hand = "2026-11-16T13:00:00.000Z";
+  const only = (starts: string[], duration = 30): OfferRules => ({ onlyOffered: true, slots: offeredSlotsInput(starts, duration) });
+
+  it("lists every picked time, free or added by hand, in time order with the current length", () => {
+    expect(offeredSlotsInput([free, hand], 45)).toEqual([
+      { start: hand, duration: 45 },
+      { start: free, duration: 45 },
+    ]);
+  });
+
+  it("has nothing to save or copy while no time is picked", () => {
+    expect(offerPlan("et1", EMPTY_MEETING_DETAILS, [], only([]))).toEqual({ kind: "empty" });
+    expect(copyGate("et1", { title: "Demo", guests: [], draft: "" }, { status: "idle" }, [], only([]))).toEqual({ canCopy: false, status: "empty", message: EMPTY_MESSAGE });
+  });
+
+  it("saves an offer for picked times alone and sends onlyOffered with every slot", () => {
+    const plan = offerPlan("et1", EMPTY_MEETING_DETAILS, [], only([free]));
+    expect(plan).toMatchObject({ kind: "save", input: { eventTypeId: "et1", title: "", guests: [], manualSlots: [], onlyOffered: true, slots: [{ start: free, duration: 30 }] } });
+    const key = plan.kind === "save" ? plan.key : "";
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, { status: "idle" }, [], only([free]))).toMatchObject({ canCopy: false, status: "saving" });
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, { status: "saved", key, offerId: "off_2" }, [], only([free]))).toEqual({ canCopy: true, offerId: "off_2" });
+  });
+
+  it("locks copy again when the picks, their length or the switch change", () => {
+    const key = offerKey("et1", EMPTY_MEETING_DETAILS, [], only([free]));
+    const saved = { status: "saved", key, offerId: "off_2" } as const;
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, saved, [], only([free, hand]))).toMatchObject({ canCopy: false, status: "saving" });
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, saved, [], only([free], 60))).toMatchObject({ canCopy: false, status: "saving" });
+    // Switch turned on: nothing typed, so plain links (no offer) again.
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, saved, [], OPEN_RULES)).toEqual({ canCopy: true });
+    const typed = { title: "Demo", guests: [], draft: "" };
+    expect(offerKey("et1", typed, [], only([free]))).not.toBe(offerKey("et1", typed, [], OPEN_RULES));
+  });
+
+  it("keeps the old key while the switch is on", () => {
+    expect(offerKey("et1", EMPTY_MEETING_DETAILS, [], OPEN_RULES)).toBe(offerKey("et1", EMPTY_MEETING_DETAILS));
+    expect(offerPlan("et1", EMPTY_MEETING_DETAILS, [], OPEN_RULES)).toEqual({ kind: "none" });
+    const plan = offerPlan("et1", { title: "Demo", guests: [] }, [], OPEN_RULES);
+    expect(plan.kind === "save" && plan.input).toEqual({ eventTypeId: "et1", title: "Demo", guests: [], manualSlots: [], onlyOffered: false });
+  });
+
+  it("stays locked on a slots error, or a saved offer without an id", () => {
+    const key = offerKey("et1", EMPTY_MEETING_DETAILS, [], only([free]));
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, { status: "error", key, message: "Fix", fieldErrors: { slots: "A time is in the past" } }, [], only([free]))).toEqual({ canCopy: false, status: "error", message: "Fix" });
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, { status: "saved", key, offerId: null }, [], only([free]))).toEqual({ canCopy: false, status: "error", message: TIMES_SAVE_FAILED });
+  });
+});
+
+describe("copy gate for a private host", () => {
+  const rules: OfferRules = { onlyOffered: false, slots: [], privateHost: true };
+
+  it("always saves first, even with nothing typed, and puts the id in the links", () => {
+    const plan = offerPlan("et1", EMPTY_MEETING_DETAILS, [], rules);
+    expect(plan.kind).toBe("save");
+    const key = plan.kind === "save" ? plan.key : "";
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, { status: "idle" }, [], rules)).toMatchObject({ canCopy: false, status: "saving" });
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, { status: "saved", key, offerId: "off_3" }, [], rules)).toEqual({ canCopy: true, offerId: "off_3" });
+  });
+
+  it("trusts the server when it needs no offer for an empty save", () => {
+    const key = offerKey("et1", EMPTY_MEETING_DETAILS, [], rules);
+    expect(copyGate("et1", EMPTY_MEETING_DETAILS, { status: "saved", key, offerId: null }, [], rules)).toEqual({ canCopy: true });
+    expect(copyGate("et1", { title: "Demo", guests: [], draft: "" }, { status: "saved", key: offerKey("et1", { title: "Demo", guests: [] }, [], rules), offerId: null }, [], rules)).toEqual({
+      canCopy: false,
+      status: "error",
+      message: DETAILS_SAVE_FAILED,
+    });
   });
 });

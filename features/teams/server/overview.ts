@@ -2,6 +2,7 @@ import { and, asc, count, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm"
 import type { Database } from "@/db/client";
 import { booking, bookingHost, eventType, membership, user, webhook } from "@/db/schema";
 import { ACTIVE } from "@/features/bookings/server/core";
+import { hiddenFromViewer } from "@/features/privacy/server/guard";
 import { atLeast, requireTeamRole, type TeamRole } from "./access";
 import { listMyTeams, membersOf } from "./service";
 
@@ -98,8 +99,12 @@ export async function loadMemberActivity(
   windows: { today: Window; week: Window },
 ): Promise<MemberActivity[]> {
   await requireTeamRole(db, actorId, teamId, "admin");
-  const members = await membersOf(db, teamId);
-  if (members.length === 0) return [];
+  const all = await membersOf(db, teamId);
+  if (all.length === 0) return [];
+  // Private calendars: no meeting counts for someone the viewer isn't allowed for (shown as 0).
+  const hidden = await hiddenFromViewer(db, actorId, all.map((m) => m.userId));
+  const members = all.filter((m) => !hidden.has(m.userId));
+  if (!members.length) return all.map((m) => ({ userId: m.userId, name: m.name, email: m.email, role: m.role, today: 0, week: 0 }));
   const { today, week } = windows;
   const from = new Date(Math.min(today.start, week.start));
   const to = new Date(Math.max(today.end, week.end));
@@ -123,7 +128,7 @@ export async function loadMemberActivity(
     )
     .groupBy(bookingHost.userId);
   const counts = new Map(rows.map((r) => [r.userId, r]));
-  return members.map((m) => ({
+  return all.map((m) => ({
     userId: m.userId,
     name: m.name,
     email: m.email,

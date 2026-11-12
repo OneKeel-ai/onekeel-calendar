@@ -104,10 +104,72 @@ export type OfferManualSlot = { start: string; duration: number };
 export const isEmptyOffer = (value: Pick<MeetingDetailsValue, "title" | "guests">, manualSlots: readonly OfferManualSlot[] = []) =>
   isEmptyDetails(value) && manualSlots.length === 0;
 
+/**
+ * Who may book from the links. `onlyOffered`: the client can book only `slots` (every time on the
+ * card, free or added by hand). Off, the links also offer "See all available times".
+ * `privateHost`: the host keeps their calendar private, so every link needs a saved offer.
+ */
+export type OfferRules = { onlyOffered: boolean; slots: readonly OfferManualSlot[]; privateHost?: boolean };
+
+/** Links offer every open time, as before this switch existed. */
+export const OPEN_RULES: OfferRules = { onlyOffered: false, slots: [] };
+
 /** Identifies what has to be saved: the same key means the same saved offer can be used. */
-export function offerKey(eventTypeId: string, value: Pick<MeetingDetailsValue, "title" | "guests">, manualSlots: readonly OfferManualSlot[] = []): string {
-  const base = [eventTypeId, value.title.trim(), value.guests];
-  return JSON.stringify(manualSlots.length ? [...base, manualSlots.map((m) => [m.start, m.duration])] : base);
+export function offerKey(
+  eventTypeId: string,
+  value: Pick<MeetingDetailsValue, "title" | "guests">,
+  manualSlots: readonly OfferManualSlot[] = [],
+  rules: OfferRules = OPEN_RULES,
+): string {
+  const base: unknown[] = [eventTypeId, value.title.trim(), value.guests];
+  if (manualSlots.length || rules.onlyOffered) base.push(manualSlots.map((m) => [m.start, m.duration]));
+  if (rules.onlyOffered) base.push("only", rules.slots.map((m) => [m.start, m.duration]));
+  return JSON.stringify(base);
+}
+
+/** What the offer saves (the server action's input). `slots` only when the client is limited to them. */
+export type OfferSaveInput = {
+  eventTypeId: string;
+  title: string;
+  guests: string[];
+  manualSlots: OfferManualSlot[];
+  onlyOffered: boolean;
+  slots?: OfferManualSlot[];
+};
+
+export type OfferPlan =
+  /** Nothing to save: links carry no offer, as before. */
+  | { kind: "none" }
+  /** The client may only book the picked times, and none are picked: nothing to save or copy. */
+  | { kind: "empty" }
+  | { kind: "save"; key: string; input: OfferSaveInput };
+
+/** Whether (and what) to save for what is on screen. */
+export function offerPlan(
+  eventTypeId: string,
+  value: Pick<MeetingDetailsValue, "title" | "guests">,
+  manualSlots: readonly OfferManualSlot[] = [],
+  rules: OfferRules = OPEN_RULES,
+): OfferPlan {
+  if (rules.onlyOffered && rules.slots.length === 0) return { kind: "empty" };
+  if (!rules.onlyOffered && !rules.privateHost && isEmptyOffer(value, manualSlots)) return { kind: "none" };
+  return {
+    kind: "save",
+    key: offerKey(eventTypeId, value, manualSlots, rules),
+    input: {
+      eventTypeId,
+      title: value.title.trim(),
+      guests: [...value.guests],
+      manualSlots: manualSlots.map((m) => ({ ...m })),
+      onlyOffered: rules.onlyOffered,
+      ...(rules.onlyOffered && { slots: rules.slots.map((m) => ({ ...m })) }),
+    },
+  };
+}
+
+/** Every time on the card, for `slots`: the picks (free or by hand) with the current meeting length, in time order. */
+export function offeredSlotsInput(picks: readonly string[], duration: number): OfferManualSlot[] {
+  return [...picks].sort((a, b) => Date.parse(a) - Date.parse(b)).map((start) => ({ start, duration }));
 }
 
 export type OfferSaveState =
@@ -116,31 +178,46 @@ export type OfferSaveState =
   | { status: "saved"; key: string; offerId: string | null }
   | { status: "error"; key: string; message: string; fieldErrors?: OfferFieldErrors };
 
-export type OfferFieldErrors = { title?: string; guests?: string; manualSlots?: string };
+export type OfferFieldErrors = { title?: string; guests?: string; manualSlots?: string; slots?: string };
 
 export type CopyGate =
   | { canCopy: true; offerId?: string }
-  | { canCopy: false; status: "saving" | "error" | "draft"; message: string };
+  | { canCopy: false; status: "saving" | "error" | "draft" | "empty"; message: string };
 
 export const SAVING_MESSAGE = "Saving meeting details…";
 export const DRAFT_MESSAGE = "Finish or remove the address typed in Also invite.";
+export const EMPTY_MESSAGE = "Pick at least one time to send.";
 
 export const MANUAL_SAVE_FAILED = "Couldn't save the times added by hand. Try again.";
+export const DETAILS_SAVE_FAILED = "Couldn't save meeting details. Try again.";
+export const TIMES_SAVE_FAILED = "Couldn't save the picked times. Try again.";
 
 /**
- * Whether the times may be copied. Links must carry the title, people and hand-added times shown
- * on screen, so copy is only allowed when all are empty (no offer, links as before) or when
- * exactly what is on screen has been saved for this meeting type.
+ * Whether the times may be copied. Links must carry the title, people, hand-added times and who
+ * may book shown on screen, so copy is only allowed when nothing needs saving (no offer, links as
+ * before) or when exactly what is on screen has been saved for this meeting type. A saved offer
+ * id always goes into the links.
  */
-export function copyGate(eventTypeId: string, value: MeetingDetailsValue, save: OfferSaveState, manualSlots: readonly OfferManualSlot[] = []): CopyGate {
+export function copyGate(
+  eventTypeId: string,
+  value: MeetingDetailsValue,
+  save: OfferSaveState,
+  manualSlots: readonly OfferManualSlot[] = [],
+  rules: OfferRules = OPEN_RULES,
+): CopyGate {
   if (value.draft.trim() !== "") return { canCopy: false, status: "draft", message: DRAFT_MESSAGE };
-  if (isEmptyOffer(value, manualSlots)) return { canCopy: true };
-  const key = offerKey(eventTypeId, value, manualSlots);
-  if (save.status === "saved" && save.key === key) {
+  const plan = offerPlan(eventTypeId, value, manualSlots, rules);
+  if (plan.kind === "none") return { canCopy: true };
+  if (plan.kind === "empty") return { canCopy: false, status: "empty", message: EMPTY_MESSAGE };
+  if (save.status === "saved" && save.key === plan.key) {
     if (save.offerId) return { canCopy: true, offerId: save.offerId };
-    const message = value.guests.length > 0 ? "The host is already in the meeting. Remove them from Also invite." : MANUAL_SAVE_FAILED;
-    return { canCopy: false, status: "error", message };
+    if (value.guests.length > 0) return { canCopy: false, status: "error", message: "The host is already in the meeting. Remove them from Also invite." };
+    if (manualSlots.length > 0) return { canCopy: false, status: "error", message: MANUAL_SAVE_FAILED };
+    if (rules.onlyOffered) return { canCopy: false, status: "error", message: TIMES_SAVE_FAILED };
+    if (!isEmptyDetails(value)) return { canCopy: false, status: "error", message: DETAILS_SAVE_FAILED };
+    // Saved only because the host is private, and the server needs no offer: plain links work.
+    return { canCopy: true };
   }
-  if (save.status === "error" && save.key === key) return { canCopy: false, status: "error", message: save.message };
+  if (save.status === "error" && save.key === plan.key) return { canCopy: false, status: "error", message: save.message };
   return { canCopy: false, status: "saving", message: SAVING_MESSAGE };
 }

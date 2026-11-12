@@ -32,7 +32,9 @@ export type BookingError =
   /** A required host's calendar is missing, disconnected or unreadable: no booking, no free slots. */
   | "CALENDAR_UNAVAILABLE"
   /** The link's scheduling offer is unknown, for another event type, or can't apply here. */
-  | "OFFER_INVALID";
+  | "OFFER_INVALID"
+  /** A host keeps their calendar private: public booking needs a valid scheduling offer (an emailed link). */
+  | "OFFER_REQUIRED";
 
 export class BookingFailure extends Error {
   constructor(
@@ -97,7 +99,17 @@ export const BOOKING_MANAGER_ROLES = ["owner", "admin"] as const;
  * busy-time and own-event matching must stay per actual host.
  */
 export const isBookingManager = (userId: string) =>
-  sql`(${isHostOf(userId)} OR EXISTS (SELECT 1 FROM event_type et INNER JOIN membership m ON m.team_id = et.team_id WHERE et.id = "booking"."event_type_id" AND et.team_id IS NOT NULL AND m.user_id = ${userId} AND m.role IN ('owner', 'admin')))`;
+  sql`(${isHostOf(userId)} OR (EXISTS (SELECT 1 FROM event_type et INNER JOIN membership m ON m.team_id = et.team_id WHERE et.id = "booking"."event_type_id" AND et.team_id IS NOT NULL AND m.user_id = ${userId} AND m.role IN ('owner', 'admin')) AND ${allowedForBookingHosts(userId)}))`;
+
+/**
+ * Private calendars (features/privacy): no organizer or host of the booking keeps their calendar
+ * private unless this user is allowed for them (their own email or one of their delegates).
+ * Applied to the team owner/admin branch of isBookingManager, so a team admin who isn't allowed
+ * can't list, decide, cancel or ask to reschedule a private person's meetings — even if old data
+ * put them in the same team. Read live from calendar_guard on every query.
+ */
+export const allowedForBookingHosts = (userId: string) =>
+  sql`NOT EXISTS (SELECT 1 FROM "user" gu INNER JOIN calendar_guard g ON g.email = lower(gu.email) WHERE (gu.id = "booking"."organizer_id" OR gu.id IN (SELECT gbh.user_id FROM booking_host gbh WHERE gbh.booking_id = "booking"."id")) AND gu.id <> ${userId} AND NOT (g.delegates @> to_jsonb(coalesce((SELECT lower(vu.email) FROM "user" vu WHERE vu.id = ${userId}), ''))))`;
 
 export async function deactivate(tx: Tx, bookingId: string) {
   await tx.update(bookingHost).set({ active: false }).where(eq(bookingHost.bookingId, bookingId));

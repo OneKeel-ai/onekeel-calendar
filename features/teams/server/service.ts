@@ -8,6 +8,16 @@ import type { TeamForm } from "../schemas";
 import { atLeast, requireTeamRole, roleIn, TeamError, type TeamRole } from "./access";
 import { hitAccountLimit } from "@/lib/auth/lockout";
 import { addToAssignAllEventTypes, detachCopies } from "./event-types";
+import { lockGuards, teamPrivacyConflict } from "@/features/privacy/server/guard";
+
+/**
+ * Private calendars: refuses a join that would put someone with a private calendar in a team
+ * with a person who isn't allowed for them (either way round). See features/privacy/server/guard.ts.
+ */
+async function assertPrivacyAllows(db: Database | Tx, teamId: string, email: string, opts: { includePending?: boolean; now?: number } = {}) {
+  const conflict = await teamPrivacyConflict(db, teamId, email, opts);
+  if (conflict) throw new TeamError("PRIVATE_CALENDAR", conflict);
+}
 
 /** Teams, members and invitations (TEAM-001…003). Every function checks the caller's role. */
 
@@ -142,6 +152,7 @@ export async function inviteMember(
     .innerJoin(user, eq(user.id, membership.userId))
     .where(and(eq(membership.teamId, teamId), sql`lower(${user.email}) = ${email}`));
   if (existing) throw new TeamError("ALREADY_MEMBER");
+  await assertPrivacyAllows(db, teamId, email, { includePending: true, now });
   const [row] = await db
     .insert(teamInvitation)
     .values({ id: newId(), teamId, email, role: input.role, invitedBy: actorId, expiresAt: new Date(now + INVITATION_TTL_MS) })
@@ -201,6 +212,9 @@ export async function acceptInvitation(db: Database, invitee: Invitee, invitatio
   if (!invitee.emailVerified) throw new TeamError("EMAIL_NOT_VERIFIED");
   const teamId = await db.transaction(async (tx) => {
     const invite = await ownInvitation(tx, invitee, invitationId, now);
+    // Re-checked at accept, serialized with guard saves: guards and members may have changed since the invite.
+    await lockGuards(tx);
+    await assertPrivacyAllows(tx, invite.teamId, invitee.email);
     // An invitation grants no more than its sender still holds (a demoted or departed inviter).
     const inviterRole = invite.invitedBy ? await roleIn(tx, invite.invitedBy, invite.teamId) : null;
     const role = inviterRole && atLeast(inviterRole, invite.role) ? invite.role : "member";

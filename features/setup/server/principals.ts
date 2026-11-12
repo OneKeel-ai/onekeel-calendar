@@ -6,6 +6,7 @@ import { listTeamEventTypes, type TeamEventTypeView } from "@/features/teams/ser
 import { TeamError } from "@/features/teams/server/access";
 import { memberLabel } from "@/features/teams/server/availability";
 import { listMyTeams, membersOf } from "@/features/teams/server/service";
+import { hiddenFromViewer } from "@/features/privacy/server/guard";
 import type { ScheduleType, SchedulingPrincipal } from "../types";
 
 /**
@@ -73,6 +74,9 @@ export async function loadTeamPrincipalsWithHosts(db: Database, userId: string):
       }),
     })),
   );
+  // Private calendars: event types hosted by someone the user isn't allowed for are left out.
+  const hidden = await hiddenFromViewer(db, userId, loaded.flatMap((t) => t.types.flatMap((et) => et.hosts.map((h) => h.userId))));
+  if (hidden.size) for (const t of loaded) t.types = t.types.filter((et) => !et.hosts.some((h) => hidden.has(h.userId)));
   const principals = groupTeamTypes(loaded);
   // Every listed team type has exactly one host (groupTeamTypes skips the others).
   const hostOf = new Map(loaded.flatMap((t) => t.types.flatMap((et) => (et.hosts.length === 1 ? [[et.id, et.hosts[0].userId] as const] : []))));

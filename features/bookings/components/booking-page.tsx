@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { type Database, getDb } from "@/db/client";
 import { user } from "@/db/schema";
 import { BookingWidget } from "@/features/bookings/components/booking-widget";
-import { OfferLinkInvalid } from "@/features/bookings/components/offer-link";
+import { InvitationOnly, OfferLinkInvalid } from "@/features/bookings/components/offer-link";
 import { publicLocationLabel } from "@/features/bookings/location";
 import { prefillAnswers, utmFrom } from "@/features/bookings/responses";
 import { findBookingForManage } from "@/features/bookings/server/service";
@@ -13,6 +13,7 @@ import { isUsablePrivateLink } from "@/features/event-types/server/private-links
 import { durationsOf } from "@/features/event-types/server/service";
 import { brandStyle } from "@/features/instance/theme/brand-style";
 import { getOfferForEventType, type OfferView } from "@/features/offers/server/service";
+import { bookingNeedsOffer } from "@/features/privacy/server/guard";
 import { cn } from "@/lib/cn";
 import { requestTime } from "@/lib/clock";
 import { parseBookingLinkParams } from "@/lib/embed/booking-link";
@@ -38,6 +39,8 @@ async function hostWeekStart(db: Database, userId: string): Promise<number | und
  * `layout` (features/embed/target.ts) pick the day, duration, time and calendar layout.
  * `?offer=<id>` (from Email times) sets the meeting title and people invited on booking; an offer
  * that is malformed, unknown or for another event type fails closed: no booking form at all.
+ * A private host's pages are by invitation: without a valid offer (and outside a valid
+ * reschedule) only a short message renders, no calendar and no form.
  */
 export async function BookingPageView({ target, query }: { target: BookingTarget; query: Query }) {
   const db = getDb();
@@ -72,6 +75,7 @@ export async function BookingPageView({ target, query }: { target: BookingTarget
     offer = linkParams.offer ? await getOfferForEventType(db, linkParams.offer, eventType.id) : null;
     offerInvalid = !offer;
   }
+  const invitationOnly = !offer && !offerInvalid && !rescheduleProps && (await bookingNeedsOffer(db, eventType.id));
   const weekStart = await hostWeekStart(db, target.host.id);
   const routing = one(query.routing);
   const theme = embed?.theme === "dark" ? "dark" : embed?.theme === "light" ? "light" : undefined;
@@ -85,10 +89,13 @@ export async function BookingPageView({ target, query }: { target: BookingTarget
       <Card className={cn("gap-0 overflow-clip py-0", embed ? "rounded-none border-0 shadow-none ring-0" : "shadow-sm")}>
         {offerInvalid ? (
           <OfferLinkInvalid />
+        ) : invitationOnly ? (
+          <InvitationOnly />
         ) : (
           <BookingWidget
             title={offer?.title || eventType.title}
             alsoAttending={offer?.guests}
+            restricted={offer?.restricted ? { offered: offer.offeredSlots.map((s) => s.start) } : undefined}
             hostName={target.displayName}
             description={eventType.description}
             durations={durationsOf(eventType)}

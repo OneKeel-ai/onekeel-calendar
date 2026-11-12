@@ -1,4 +1,5 @@
 import type { Database } from "@/db/client";
+import { hiddenFromViewer } from "@/features/privacy/server/guard";
 import { atLeast } from "../roles";
 import { listTeamEventTypes, type TeamEventTypeView } from "./event-types";
 import { listMyTeams } from "./service";
@@ -12,5 +13,9 @@ export async function troubleshootableTeamEventTypes(db: Database, userId: strin
   const perTeam = await Promise.all(
     teams.map(async (t) => (await listTeamEventTypes(db, userId, t.id)).filter((et) => et.schedulingType !== "managed").map((et) => ({ ...et, teamName: t.name }))),
   );
-  return perTeam.flat();
+  // Private calendars: hosts the user isn't allowed for are not offered (their day would show their free time).
+  const all = perTeam.flat();
+  const hidden = await hiddenFromViewer(db, userId, all.flatMap((et) => et.hosts.map((h) => h.userId)));
+  if (!hidden.size) return all;
+  return all.map((et) => ({ ...et, hosts: et.hosts.filter((h) => !hidden.has(h.userId)) })).filter((et) => et.hosts.length > 0);
 }
